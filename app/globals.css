@@ -24,9 +24,89 @@
 }
 
 body {
-  background: radial-gradient(circle at top, #111827 0%, #0b0f1a 60%);
+  background: #0b0f1a;
   color: var(--foreground);
   font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+  overflow-x: hidden;
+}
+
+/* Global neon scrollbar */
+html {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 198, 255, 0.78) rgba(8, 14, 32, 0.85);
+  scrollbar-gutter: stable;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+html::-webkit-scrollbar-track,
+body::-webkit-scrollbar-track,
+*::-webkit-scrollbar-track {
+  background: rgba(8, 14, 32, 0.9) !important;
+}
+
+html::-webkit-scrollbar-thumb,
+body::-webkit-scrollbar-thumb,
+*::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(58, 123, 253, 0.95), rgba(0, 198, 255, 0.95)) !important;
+  border: 2px solid rgba(8, 14, 32, 0.9) !important;
+  border-radius: 999px !important;
+  box-shadow: 0 0 10px rgba(0, 198, 255, 0.35) !important;
+}
+
+html::-webkit-scrollbar-thumb:hover,
+body::-webkit-scrollbar-thumb:hover,
+*::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(96, 165, 250, 1), rgba(34, 211, 238, 1)) !important;
+}
+
+.site-global-bg {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    radial-gradient(900px circle at 12% 18%, rgba(0, 198, 255, 0.14), transparent 58%),
+    radial-gradient(760px circle at 88% 24%, rgba(58, 123, 253, 0.16), transparent 58%),
+    radial-gradient(680px circle at 55% 90%, rgba(168, 85, 247, 0.12), transparent 62%) !important;
+}
+
+.site-global-stripes {
+  position: fixed;
+  inset: -20% -10%;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    repeating-linear-gradient(
+      112deg,
+      transparent 0 44px,
+      rgba(0, 198, 255, 0.055) 44px 46px,
+      transparent 46px 96px
+    ),
+    repeating-linear-gradient(
+      68deg,
+      transparent 0 84px,
+      rgba(147, 51, 234, 0.045) 84px 86px,
+      transparent 86px 160px
+    ) !important;
+  filter: blur(0.2px);
+  opacity: 0.55;
+  transform: translateZ(0);
+}
+
+.site-global-vignette {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    radial-gradient(1200px 500px at 50% -8%, rgba(255, 255, 255, 0.035), transparent 70%),
+    radial-gradient(140% 90% at 50% 110%, transparent 58%, rgba(2, 5, 16, 0.58) 100%) !important;
 }
 
 /* Красивые неон-кнопки */
@@ -50,4 +130,290 @@ body {
   border: 1px solid var(--border);
   border-radius: 16px;
   padding: 20px;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.03) inset,
+    0 0 12px rgba(0, 240, 255, 0.06),
+    0 0 18px rgba(255, 0, 200, 0.03);
+  transition: box-shadow 0.25s ease, border-color 0.25s ease, transform 0.25s ease;
+}
+
+.card:hover {
+  border-color: rgba(0, 240, 255, 0.35);
+  box-shadow:
+    0 0 0 1px rgba(0, 240, 255, 0.12) inset,
+    0 0 16px rgba(0, 240, 255, 0.1),
+    0 0 24px rgba(255, 0, 200, 0.06);
+}
+
+.tournament-glow {
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.04) inset,
+    0 0 16px rgba(0, 240, 255, 0.1),
+    0 0 26px rgba(0, 240, 255, 0.05),
+    0 0 34px rgba(255, 0, 200, 0.07);
+}
+
+.tournament-glow:hover {
+  box-shadow:
+    0 0 0 1px rgba(0, 240, 255, 0.16) inset,
+    0 0 20px rgba(0, 240, 255, 0.12),
+    0 0 36px rgba(255, 0, 200, 0.09);
+}
+
+.site-neon :is(section, article, .card, form) {
+  position: relative;
+  isolation: isolate;
+  background: rgba(255, 255, 255, 0.012) !important;
+  background-image: none !important;
+}
+
+.site-neon section {
+  background: rgba(255, 255, 255, 0.012) !important;
+  background-color: rgba(255, 255, 255, 0.012) !important;
+  background-image: none !important;
+}
+
+/* Home page: no block background at all. */
+.home-no-block-bg :is(section, article, .card, form) {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+.site-neon section::after {
+  display: none !important;
+}
+
+/* Disable Tailwind gradient backgrounds everywhere (including sections). */
+[class*="bg-gradient"] {
+  background-image: none !important;
+}
+
+/* Restore rounded corners only in header navigation area. */
+.site-nav :is(a, button, input, select, textarea, .rounded-full, .rounded-xl, .rounded-2xl, .rounded-3xl) {
+  border-radius: 12px !important;
+}
+
+/* Keep rounded corners for buttons site-wide. */
+:is(button, [type="button"], [type="submit"], [type="reset"], .btn-primary, a.btn-primary) {
+  border-radius: 12px !important;
+}
+
+/* Keep rounded corners for styled links. */
+a[class] {
+  border-radius: 12px !important;
+}
+
+/* Keep rounded corners for all links. */
+a {
+  border-radius: 12px !important;
+  transition:
+    transform 0.18s ease,
+    opacity 0.18s ease,
+    color 0.18s ease,
+    background-color 0.18s ease;
+  transform: translateY(0) scale(1);
+}
+
+a:hover {
+  transform: translateY(-1px) scale(1.01);
+  opacity: 0.95;
+}
+
+a:active {
+  transform: translateY(0) scale(0.98);
+  opacity: 0.88;
+}
+
+.site-neon :is(section, article, .card, form)::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 1px solid rgba(0, 240, 255, 0.12);
+  box-shadow:
+    0 0 6px rgba(0, 240, 255, 0.05),
+    0 0 10px rgba(255, 0, 200, 0.025);
+  pointer-events: none;
+}
+
+/* Global hard reset: no border radius anywhere on the site. */
+*:not(.site-global-bg):not(.site-global-stripes):not(.site-global-vignette):not(.ws-top-wrap),
+*:not(.site-global-bg):not(.site-global-stripes):not(.site-global-vignette):not(.ws-top-wrap)::before,
+*:not(.site-global-bg):not(.site-global-stripes):not(.site-global-vignette):not(.ws-top-wrap)::after {
+  border-radius: 0 !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  background-image: none !important;
+}
+
+/* Restore rich visual style only for sponsors page. */
+.sponsors-restore .s-card {
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  border-radius: 16px !important;
+  background: rgba(0, 0, 0, 0.25) !important;
+}
+
+.sponsors-restore .s-hero {
+  border: 1px solid rgba(34, 211, 238, 0.28) !important;
+  background-image: linear-gradient(135deg, rgba(6, 182, 212, 0.14), rgba(0, 0, 0, 0.32), rgba(217, 70, 239, 0.12)) !important;
+}
+
+.sponsors-restore .s-glow-cyan,
+.sponsors-restore .s-glow-pink {
+  border-radius: 9999px !important;
+  filter: blur(48px);
+}
+
+.sponsors-restore .s-glow-cyan {
+  background: rgba(34, 211, 238, 0.2) !important;
+}
+
+.sponsors-restore .s-glow-pink {
+  background: rgba(217, 70, 239, 0.18) !important;
+}
+
+.sponsors-restore .s-pill,
+.sponsors-restore .s-chip {
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  border-radius: 9999px !important;
+  background: rgba(0, 0, 0, 0.3) !important;
+}
+
+.sponsors-restore .s-tier-card {
+  background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.06), rgba(0, 0, 0, 0.34)) !important;
+}
+
+.sponsors-restore .s-tier-title {
+  border-color: rgba(252, 211, 77, 0.45) !important;
+}
+
+.sponsors-restore .s-tier-gold {
+  border-color: rgba(34, 211, 238, 0.45) !important;
+}
+
+.sponsors-restore .s-tier-silver {
+  border-color: rgba(203, 213, 225, 0.45) !important;
+}
+
+.sponsors-restore .s-tier-partner {
+  border-color: rgba(232, 121, 249, 0.45) !important;
+}
+
+.sponsors-restore .s-chip-title {
+  border-color: rgba(252, 211, 77, 0.5) !important;
+  background: rgba(245, 158, 11, 0.14) !important;
+}
+
+.sponsors-restore .s-chip-gold {
+  border-color: rgba(34, 211, 238, 0.5) !important;
+  background: rgba(6, 182, 212, 0.14) !important;
+}
+
+.sponsors-restore .s-chip-silver {
+  border-color: rgba(203, 213, 225, 0.5) !important;
+  background: rgba(100, 116, 139, 0.18) !important;
+}
+
+.sponsors-restore .s-chip-partner {
+  border-color: rgba(232, 121, 249, 0.5) !important;
+  background: rgba(217, 70, 239, 0.14) !important;
+}
+
+.sponsors-restore .s-logo-wrap {
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  border-radius: 12px !important;
+  background: rgba(0, 0, 0, 0.35) !important;
+}
+
+.sponsors-restore .s-stat {
+  border-color: rgba(255, 255, 255, 0.15) !important;
+}
+
+.sponsors-restore .s-stat-title {
+  border-color: rgba(252, 211, 77, 0.35) !important;
+  background: rgba(245, 158, 11, 0.12) !important;
+}
+
+.sponsors-restore .s-stat-gold {
+  border-color: rgba(34, 211, 238, 0.35) !important;
+  background: rgba(6, 182, 212, 0.12) !important;
+}
+
+.sponsors-restore .s-stat-silver {
+  border-color: rgba(203, 213, 225, 0.35) !important;
+  background: rgba(100, 116, 139, 0.16) !important;
+}
+
+/* Better readability for rules/markdown lists: each item as a separate block. */
+.markdown-content ul,
+.markdown-content ol {
+  list-style: none;
+  padding-left: 0;
+  margin-left: 0;
+}
+
+.markdown-content li {
+  position: relative;
+  margin: 10px 0;
+  padding: 10px 12px 10px 38px;
+  background: rgba(255, 255, 255, 0.03) !important;
+  outline: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.markdown-content ul > li::before {
+  content: "•";
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #22d3ee;
+  font-size: 16px;
+  line-height: 1;
+  font-weight: 700;
+}
+
+.markdown-content ol {
+  counter-reset: rules-counter;
+}
+
+.markdown-content ol > li {
+  counter-increment: rules-counter;
+}
+
+.markdown-content ol > li::before {
+  content: counter(rules-counter);
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #0b0f1a;
+  font-size: 11px;
+  line-height: 1;
+  font-weight: 700;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #22d3ee !important;
+}
+
+/* Header glass styling in site theme */
+.site-nav {
+  background: rgba(4, 10, 24, 0.72) !important;
+  border-bottom: 1px solid rgba(56, 189, 248, 0.24) !important;
+  backdrop-filter: blur(14px) saturate(120%);
+  -webkit-backdrop-filter: blur(14px) saturate(120%);
+}
+
+.site-nav::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  background: rgba(56, 189, 248, 0.45) !important;
+  opacity: 0.6;
+  pointer-events: none;
 }

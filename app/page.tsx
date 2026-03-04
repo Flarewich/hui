@@ -1,11 +1,21 @@
+import Image from "next/image";
 import Link from "next/link";
-import PageShell from "@/components/PageShell";
 import { createSupabaseServerClient } from "@/lib/supabaseServer";
-import Markdown from "@/components/Markdown";
-import { getSitePage } from "@/lib/pages";
+import { getDateLocale, getMessages } from "@/lib/i18n";
+import { getRequestLocale } from "@/lib/i18nServer";
+import TopPrizeTournament from "@/components/TopPrizeTournament";
 
-function toRuDate(ts: string) {
-  return new Date(ts).toLocaleString("ru-RU", {
+type UpcomingTournament = {
+  id: string;
+  title: string;
+  start_at: string;
+  prize_pool: number | null;
+  mode: string;
+  games: { name: string } | null;
+};
+
+function formatDate(ts: string, localeCode: string) {
+  return new Date(ts).toLocaleString(localeCode, {
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
@@ -15,7 +25,11 @@ function toRuDate(ts: string) {
 }
 
 export default async function HomePage() {
-  const page = await getSitePage("home");
+  const locale = await getRequestLocale();
+  const isEn = locale === "en";
+  const t = getMessages(locale);
+  const dateLocale = getDateLocale(locale);
+
   const supabase = await createSupabaseServerClient();
 
   const { data: upcoming } = await supabase
@@ -23,84 +37,115 @@ export default async function HomePage() {
     .select("id, title, start_at, prize_pool, mode, games(name)")
     .eq("status", "upcoming")
     .order("start_at", { ascending: true })
-    .limit(6);
+    .limit(4)
+    .returns<UpcomingTournament[]>();
+
+  const { data: topTournament } = await supabase
+    .from("tournaments")
+    .select("id, title, start_at, prize_pool, mode, games(name)")
+    .in("status", ["upcoming", "live"])
+    .order("prize_pool", { ascending: false })
+    .order("start_at", { ascending: true })
+    .limit(1)
+    .maybeSingle<UpcomingTournament>();
 
   return (
-    <PageShell
-      title="CYBERHUB"
-      subtitle="Турниры. Рейтинги. Поддержка. Всё в одном месте."
-      right={
-        <div className="flex gap-2">
-          <Link href="/tournaments" className="btn-primary">Перейти к турнирам</Link>
-          <Link href="/help" className="btn-ghost">Как это работает</Link>
-        </div>
-      }
-    >
-      <div className="grid gap-6 lg:grid-cols-3">
-        <div className="card p-6 lg:col-span-2">
-          <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/70">
-            ⚡ Кибер-режим включён
-          </div>
-          <h2 className="mt-4 text-3xl font-extrabold tracking-wide">
-            Играй. Побеждай. Забирай призы.
-          </h2>
-          <p className="mt-3 text-sm text-white/60">
-            Регистрация за секунды, прозрачные правила, честная поддержка.
-          </p>
-
-          <div className="mt-6 grid gap-3 sm:grid-cols-3">
-            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <div className="text-xs text-white/50">Турниры</div>
-              <div className="mt-1 text-lg font-bold text-cyan-200">Ежедневно</div>
+    <div className="home-no-block-bg relative left-1/2 right-1/2 w-screen -translate-x-1/2 space-y-6 px-3 sm:px-4 lg:px-6 xl:px-8">
+      <section className="relative overflow-hidden rounded-3xl border border-cyan-300/35 px-4 py-6 sm:px-6 sm:py-8 md:px-8 md:py-10">
+        <div className="relative grid items-center gap-7 md:grid-cols-[1fr_240px]">
+          <div className="max-w-4xl">
+            <div className="inline-flex rounded-full border border-cyan-300/35 bg-cyan-400/10 px-3 py-1 text-xs font-semibold tracking-wide text-cyan-100">
+              WinStrike
             </div>
-            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <div className="text-xs text-white/50">Поддержка</div>
-              <div className="mt-1 text-lg font-bold text-fuchsia-200">24/7</div>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <div className="text-xs text-white/50">Игры</div>
-              <div className="mt-1 text-lg font-bold text-sky-200">Мобайл + PC</div>
-            </div>
-          </div>
 
-          <div className="mt-6">
-            <Markdown content={page.content_md} />
-          </div>
-        </div>
+            <h1 className="mt-4 text-2xl font-extrabold tracking-tight sm:text-3xl md:text-5xl">
+              {t.home.title1}
+              <span className="block bg-gradient-to-r from-cyan-300 to-fuchsia-300 bg-clip-text text-transparent">
+                {t.home.title2}
+              </span>
+            </h1>
 
-        <div className="card p-6">
-          <div className="flex items-center justify-between">
-            <h3 className="text-lg font-bold">Ближайшие</h3>
-            <Link href="/tournaments" className="text-sm text-cyan-300 hover:text-cyan-200">
-              Все →
-            </Link>
-          </div>
+            <p className="mt-4 max-w-3xl text-sm leading-relaxed text-white/80 md:text-base">{t.home.subtitle}</p>
+            <p className="mt-3 max-w-3xl text-sm leading-relaxed text-white/65 md:text-base">
+              {isEn
+                ? "WinStrike is a tournament platform with clear brackets, transparent rules, live match rooms and quick registration for solo, duo and squad formats. We focus on fair play, stable organization and real competitive atmosphere."
+                : "WinStrike — это турнирная платформа с понятной структурой матчей, прозрачными правилами, живыми матч-румами и быстрой регистрацией для форматов solo, duo и squad. Мы делаем акцент на честной игре, стабильной организации и соревновательной атмосфере."}
+            </p>
+            <p className="mt-2 max-w-3xl text-sm leading-relaxed text-white/60">
+              {isEn
+                ? "Choose a game, join a tournament, gather your team and compete for the prize pool with full control over schedule and match access."
+                : "Выбирайте игру, вступайте в турнир, собирайте команду и соревнуйтесь за призовой фонд с полным контролем над расписанием и доступом к матчам."}
+            </p>
 
-          <div className="mt-4 space-y-3">
-            {(upcoming ?? []).map((t: any) => (
-              <Link
-                key={t.id}
-                href={`/tournaments/${t.id}`}
-                className="block rounded-2xl border border-white/10 bg-white/5 p-4 hover:bg-white/10"
-              >
-                <div className="text-xs text-white/50">
-                  {t.games?.name ?? "—"} • {t.mode.toUpperCase()} • {toRuDate(t.start_at)}
-                </div>
-                <div className="mt-1 line-clamp-2 text-sm font-semibold">{t.title}</div>
-                <div className="mt-2 text-sm font-bold text-cyan-200">
-                  {Number(t.prize_pool ?? 0).toLocaleString("ru-RU")} ₽
-                </div>
+            <div className="mt-6 flex flex-wrap gap-3">
+              <Link href="/tournaments" className="rounded-xl bg-white px-5 py-2.5 text-sm font-semibold text-black hover:bg-white/90">
+                {t.home.allTournaments}
               </Link>
-            ))}
+              <Link href="/help" className="rounded-xl border border-white/15 px-5 py-2.5 text-sm font-semibold hover:bg-white/5">
+                {t.home.rules}
+              </Link>
+            </div>
+          </div>
 
-            {(upcoming?.length ?? 0) === 0 && (
-              <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-white/60">
-                Пока нет ближайших турниров.
-              </div>
-            )}
+          <div className="mx-auto w-[150px] sm:w-[185px] md:w-[230px]">
+            <div className="overflow-hidden rounded-3xl border border-cyan-300/35 p-1">
+              <Image
+                src="/ava-v2.png"
+                alt="Avatar"
+                width={230}
+                height={230}
+                className="h-auto w-full rounded-[20px] object-cover"
+                priority
+              />
+            </div>
           </div>
         </div>
-      </div>
-    </PageShell>
+      </section>
+
+      {topTournament && (
+        <TopPrizeTournament
+          id={topTournament.id}
+          title={topTournament.title}
+          startAt={topTournament.start_at}
+          prizePool={Number(topTournament.prize_pool ?? 0)}
+          mode={String(topTournament.mode)}
+          gameName={topTournament.games?.name ?? "-"}
+          locale={dateLocale}
+        />
+      )}
+
+      <section className="rounded-3xl border border-white/10 p-4 sm:p-6">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <h2 className="text-xl font-bold">{t.home.upcoming}</h2>
+          <Link href="/tournaments" className="text-sm text-cyan-300 hover:text-cyan-200">
+            {t.home.showAll} -
+          </Link>
+        </div>
+
+        <div className="space-y-3">
+          {(upcoming ?? []).map((item) => (
+            <Link
+              key={item.id}
+              href={`/tournaments/${item.id}`}
+              className="block rounded-2xl border border-white/10 p-4 transition hover:border-cyan-300/30 hover:bg-white/5"
+            >
+              <div className="text-xs text-white/55">
+                {item.games?.name ?? "-"} | {String(item.mode).toUpperCase()} | {formatDate(item.start_at, dateLocale)}
+              </div>
+              <div className="mt-1 text-sm font-semibold">{item.title}</div>
+              <div className="mt-2 text-sm font-bold text-cyan-200">
+                {Number(item.prize_pool ?? 0).toLocaleString(dateLocale)} RUB
+              </div>
+            </Link>
+          ))}
+
+          {(upcoming?.length ?? 0) === 0 && (
+            <div className="rounded-2xl border border-white/10 p-4 text-sm text-white/60">
+              {t.home.noUpcoming}
+            </div>
+          )}
+        </div>
+      </section>
+    </div>
   );
 }

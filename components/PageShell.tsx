@@ -11,7 +11,7 @@ export default function PageShell({
 }) {
   return (
     <div className="space-y-6">
-      <div className="card p-6">
+      <div className="card p-4 sm:p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h1 className="title">{title}</h1>
