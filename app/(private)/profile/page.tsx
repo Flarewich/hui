@@ -124,12 +124,10 @@ export default async function ProfilePage({
   const tournaments = tournamentsResult.data ?? [];
   const tournamentsById = new Map(tournaments.map((t) => [t.id, t]));
 
-  const myModes = new Set(myTeams.map((t) => t.mode));
-
   return (
-    <div className="space-y-6">
-      <div className="grid gap-6 xl:grid-cols-[1.1fr_1fr]">
-        <div className="relative overflow-hidden rounded-3xl border border-cyan-400/20 p-6">
+    <div className="space-y-5 sm:space-y-6">
+      <div className="grid gap-5 sm:gap-6 xl:grid-cols-[1.1fr_1fr]">
+        <div className="relative overflow-hidden rounded-3xl border border-cyan-400/20 p-4 sm:p-6">
           <div className="absolute -right-14 -top-14 h-52 w-52 rounded-full bg-cyan-400/20 blur-3xl" />
           <div className="absolute -bottom-20 left-10 h-56 w-56 rounded-full bg-fuchsia-400/20 blur-3xl" />
 
@@ -160,7 +158,7 @@ export default async function ProfilePage({
           </div>
         </div>
 
-        <form action="/profile/update" method="post" encType="multipart/form-data" className="rounded-3xl border border-white/10 bg-white/5 p-6">
+        <form action="/profile/update" method="post" encType="multipart/form-data" className="rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6">
           <h2 className="text-lg font-semibold">{isEn ? "Edit profile" : "Редактирование профиля"}</h2>
           <p className="mt-1 text-sm text-white/60">{isEn ? "Username updates instantly, avatar uploads from file." : "Ник обновляется сразу, аватар загружается файлом."}</p>
 
@@ -211,7 +209,7 @@ export default async function ProfilePage({
         </form>
       </div>
 
-      <div id="teams" className="rounded-3xl border border-white/10 bg-white/5 p-6">
+      <div id="teams" className="rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6">
         <h2 className="text-lg font-semibold">{isEn ? "My teams" : "Мои команды"}</h2>
         <p className="mt-1 text-sm text-white/60">
           {isEn
@@ -281,9 +279,9 @@ export default async function ProfilePage({
       </div>
 
       {!teamsTableMissing && (
-        <div className="rounded-3xl border border-white/10 bg-white/5 p-6">
+        <div className="rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6">
           <h2 className="text-lg font-semibold">{isEn ? "Open teams" : "Открытые команды"}</h2>
-          <p className="mt-1 text-sm text-white/60">{isEn ? "You can join another team if there is a free slot and you do not already have a team in that mode." : "Вы можете присоединиться к другой команде, если в ней есть место и у вас нет команды этого режима."}</p>
+          <p className="mt-1 text-sm text-white/60">{isEn ? "You can join another team if there is a free slot." : "Вы можете присоединиться к другой команде, если в ней есть свободное место."}</p>
 
           <div className="mt-4 grid gap-3 md:grid-cols-2">
             {openTeams.map((team) => {
@@ -291,8 +289,6 @@ export default async function ProfilePage({
               const teamGame = teamGameById.get(team.id);
               const limit = getTeamSizeLimit(team.mode, teamGame?.slug ?? null, teamGame?.name ?? null);
               const full = count >= limit;
-              const blockedByMode = myModes.has(team.mode);
-
               return (
                 <div key={team.id} className="rounded-2xl border border-white/10 bg-black/20 p-4">
                   <div className="text-sm font-semibold">{team.name}</div>
@@ -306,10 +302,6 @@ export default async function ProfilePage({
                   <div className="mt-3">
                     {full ? (
                       <div className="rounded-lg border border-white/15 bg-black/25 px-3 py-1.5 text-xs text-white/60">{isEn ? "Team is full" : "Команда заполнена"}</div>
-                    ) : blockedByMode ? (
-                      <div className="rounded-lg border border-white/15 bg-black/25 px-3 py-1.5 text-xs text-white/60">
-                        {isEn ? "You already have a team for" : "У вас уже есть команда режима"} {modeLabel(team.mode)}
-                      </div>
                     ) : (
                       <form action="/teams/join" method="post">
                         <input type="hidden" name="team_id" value={team.id} />
@@ -341,7 +333,7 @@ export default async function ProfilePage({
         </div>
       )}
 
-      <div className="rounded-3xl border border-white/10 bg-white/5 p-6">
+      <div className="rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6">
         <h2 className="text-lg font-semibold">{isEn ? "My tournaments" : "Мои турниры"}</h2>
 
         {registrationsError && (

@@ -1,4 +1,4 @@
-import Link from "next/link";
+﻿import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createSupabaseRouteClient } from "@/lib/supabaseRoute";
 import { createSupabaseServerClient } from "@/lib/supabaseServer";
@@ -14,12 +14,11 @@ export default async function LoginPage({
   const isEn = locale === "en";
 
   const serverSupabase = await createSupabaseServerClient();
+  const sp = await searchParams;
   const {
     data: { user },
   } = await serverSupabase.auth.getUser();
-  if (user) redirect("/");
-
-  const sp = await searchParams;
+  if (user && !sp.error) redirect("/");
   const tab = sp.tab === "signup" ? "signup" : "signin";
 
   async function signIn(formData: FormData) {
@@ -98,7 +97,7 @@ export default async function LoginPage({
     <div className="mx-auto max-w-md">
       <div className="card p-6">
         <h1 className="text-2xl font-bold title-glow">{isEn ? "Account" : "Аккаунт"}</h1>
-        <p className="mt-2 text-sm muted">{isEn ? "Sign in and sign up with Supabase Auth." : "Вход и регистрация через Supabase Auth."}</p>
+        <p className="mt-2 text-sm muted">{isEn ? "Sign in or create a new account." : "Войдите или создайте новый аккаунт."}</p>
 
         <div className="mt-5 grid grid-cols-2 gap-2 rounded-xl border border-white/10 bg-black/25 p-1">
           <Link href="/login?tab=signin" className={["rounded-lg px-3 py-2 text-center text-sm font-semibold", tab === "signin" ? "bg-white text-black" : "text-white/75 hover:bg-white/5"].join(" ")}>

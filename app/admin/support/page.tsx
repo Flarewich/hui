@@ -112,11 +112,11 @@ export default async function AdminSupportPage({
   return (
     <div className="space-y-4">
       {selectedThread && (
-        <div className="rounded-3xl border border-white/10 bg-white/5 p-4">
+        <div className="rounded-3xl border border-white/10 bg-white/5 p-3 sm:p-4">
           <div className="text-sm text-white/70">
             {isEn ? "User" : "Пользователь"}: {userMap.get(selectedThread.user_id)?.username ?? selectedThread.user_id.slice(0, 8)} • {isEn ? "Status" : "Статус"}: {selectedThread.status}
           </div>
-          <div className="mt-3 flex gap-2">
+          <div className="mt-3 flex flex-wrap gap-2">
             <form action={setThreadStatus}>
               <input type="hidden" name="thread_id" value={selectedThread.id} />
               <input type="hidden" name="status" value="open" />

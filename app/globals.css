@@ -417,3 +417,23 @@ a:active {
   opacity: 0.6;
   pointer-events: none;
 }
+
+@media (max-width: 640px) {
+  /* Prevent tap-hover jitter and accidental overflow on phone screens. */
+  a:hover {
+    transform: none;
+    opacity: 1;
+  }
+
+  .site-neon :is(section, article, .card, form) {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  html::-webkit-scrollbar,
+  body::-webkit-scrollbar,
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+}

@@ -24,7 +24,32 @@ export async function middleware(req: NextRequest) {
   );
 
   // refresh session when needed
-  await supabase.auth.getUser();
+  const { data: auth } = await supabase.auth.getUser();
+  const user = auth.user;
+
+  const pathname = req.nextUrl.pathname;
+  const isPublicAuthPath = pathname === "/login" || pathname.startsWith("/auth/") || pathname.startsWith("/api/lang");
+
+  if (user && !isPublicAuthPath) {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("is_banned, banned_until, restricted_until")
+      .eq("id", user.id)
+      .maybeSingle<{ is_banned?: boolean | null; banned_until?: string | null; restricted_until?: string | null }>();
+
+    const now = Date.now();
+    const isBanned =
+      Boolean(profile?.is_banned) ||
+      (profile?.banned_until ? new Date(profile.banned_until).getTime() > now : false);
+    const isRestricted = profile?.restricted_until ? new Date(profile.restricted_until).getTime() > now : false;
+
+    if (isBanned || isRestricted) {
+      const url = req.nextUrl.clone();
+      url.pathname = "/login";
+      url.searchParams.set("error", isBanned ? "Ваш аккаунт заблокирован" : "Доступ временно ограничен");
+      return NextResponse.redirect(url);
+    }
+  }
 
   return res;
 }

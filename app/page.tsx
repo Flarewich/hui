@@ -1,4 +1,4 @@
-import Image from "next/image";
+﻿import Image from "next/image";
 import Link from "next/link";
 import { createSupabaseServerClient } from "@/lib/supabaseServer";
 import { getDateLocale, getMessages } from "@/lib/i18n";
@@ -50,9 +50,9 @@ export default async function HomePage() {
     .maybeSingle<UpcomingTournament>();
 
   return (
-    <div className="home-no-block-bg relative left-1/2 right-1/2 w-screen -translate-x-1/2 space-y-6 px-3 sm:px-4 lg:px-6 xl:px-8">
-      <section className="relative overflow-hidden rounded-3xl border border-cyan-300/35 px-4 py-6 sm:px-6 sm:py-8 md:px-8 md:py-10">
-        <div className="relative grid items-center gap-7 md:grid-cols-[1fr_240px]">
+    <div className="home-no-block-bg relative left-1/2 right-1/2 w-screen -translate-x-1/2 space-y-5 px-3 sm:space-y-6 sm:px-4 lg:px-6 xl:px-8">
+      <section className="relative overflow-hidden rounded-3xl border border-cyan-300/35 px-4 py-5 sm:px-6 sm:py-8 md:px-8 md:py-10">
+        <div className="relative grid items-center gap-5 sm:gap-7 md:grid-cols-[1fr_240px]">
           <div className="max-w-4xl">
             <div className="inline-flex rounded-full border border-cyan-300/35 bg-cyan-400/10 px-3 py-1 text-xs font-semibold tracking-wide text-cyan-100">
               WinStrike
@@ -78,25 +78,18 @@ export default async function HomePage() {
             </p>
 
             <div className="mt-6 flex flex-wrap gap-3">
-              <Link href="/tournaments" className="rounded-xl bg-white px-5 py-2.5 text-sm font-semibold text-black hover:bg-white/90">
+              <Link href="/tournaments" className="rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-black hover:bg-white/90 sm:px-5">
                 {t.home.allTournaments}
               </Link>
-              <Link href="/help" className="rounded-xl border border-white/15 px-5 py-2.5 text-sm font-semibold hover:bg-white/5">
+              <Link href="/help" className="rounded-xl border border-white/15 px-4 py-2.5 text-sm font-semibold hover:bg-white/5 sm:px-5">
                 {t.home.rules}
               </Link>
             </div>
           </div>
 
-          <div className="mx-auto w-[150px] sm:w-[185px] md:w-[230px]">
+          <div className="mx-auto w-32 sm:w-[185px] md:w-[230px]">
             <div className="overflow-hidden rounded-3xl border border-cyan-300/35 p-1">
-              <Image
-                src="/ava-v2.png"
-                alt="Avatar"
-                width={230}
-                height={230}
-                className="h-auto w-full rounded-[20px] object-cover"
-                priority
-              />
+              <Image src="/ava-v2.png" alt="Avatar" width={230} height={230} className="h-auto w-full rounded-[20px] object-cover" priority />
             </div>
           </div>
         </div>
@@ -116,34 +109,24 @@ export default async function HomePage() {
 
       <section className="rounded-3xl border border-white/10 p-4 sm:p-6">
         <div className="mb-4 flex items-center justify-between gap-3">
-          <h2 className="text-xl font-bold">{t.home.upcoming}</h2>
+          <h2 className="text-lg font-bold sm:text-xl">{t.home.upcoming}</h2>
           <Link href="/tournaments" className="text-sm text-cyan-300 hover:text-cyan-200">
-            {t.home.showAll} -
+            {t.home.showAll} →
           </Link>
         </div>
 
         <div className="space-y-3">
           {(upcoming ?? []).map((item) => (
-            <Link
-              key={item.id}
-              href={`/tournaments/${item.id}`}
-              className="block rounded-2xl border border-white/10 p-4 transition hover:border-cyan-300/30 hover:bg-white/5"
-            >
-              <div className="text-xs text-white/55">
+            <Link key={item.id} href={`/tournaments/${item.id}`} className="block rounded-2xl border border-white/10 p-4 transition hover:border-cyan-300/30 hover:bg-white/5">
+              <div className="text-xs text-white/55 break-words">
                 {item.games?.name ?? "-"} | {String(item.mode).toUpperCase()} | {formatDate(item.start_at, dateLocale)}
               </div>
-              <div className="mt-1 text-sm font-semibold">{item.title}</div>
-              <div className="mt-2 text-sm font-bold text-cyan-200">
-                {Number(item.prize_pool ?? 0).toLocaleString(dateLocale)} RUB
-              </div>
+              <div className="mt-1 text-sm font-semibold break-words">{item.title}</div>
+              <div className="mt-2 text-sm font-bold text-cyan-200">{Number(item.prize_pool ?? 0).toLocaleString(dateLocale)} RUB</div>
             </Link>
           ))}
 
-          {(upcoming?.length ?? 0) === 0 && (
-            <div className="rounded-2xl border border-white/10 p-4 text-sm text-white/60">
-              {t.home.noUpcoming}
-            </div>
-          )}
+          {(upcoming?.length ?? 0) === 0 && <div className="rounded-2xl border border-white/10 p-4 text-sm text-white/60">{t.home.noUpcoming}</div>}
         </div>
       </section>
     </div>

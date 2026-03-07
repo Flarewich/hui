@@ -46,7 +46,7 @@ export default function TopPrizeTournament(props: TopPrizeTournamentProps) {
   const prizeLen = Math.max(prizeText.length - 1, 1);
 
   return (
-    <section className="ws-top-wrap relative overflow-hidden p-5 sm:p-6">
+    <section className="ws-top-wrap relative overflow-hidden p-4 sm:p-6">
       <div className="relative grid gap-5 lg:grid-cols-[1fr_auto_1fr] lg:items-center">
         <div>
           <div className="flex flex-wrap items-center gap-2">
@@ -83,7 +83,7 @@ export default function TopPrizeTournament(props: TopPrizeTournamentProps) {
             <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-cyan-100/90">
               {isEn ? "Prize Pool" : "Призовой фонд"}
             </span>
-            <span className="text-3xl font-black sm:text-4xl md:text-5xl">
+            <span className="text-2xl font-black sm:text-4xl md:text-5xl">
               {prizeText.split("").map((ch, idx) => {
                 const isDigit = ch >= "0" && ch <= "9";
                 const ratio = idx / prizeLen;

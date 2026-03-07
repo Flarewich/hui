@@ -271,7 +271,7 @@ export default async function AdminTournamentsPage() {
         </div>
       </details>
 
-      <div id="create" className="rounded-3xl border border-white/10 bg-white/5 p-6">
+      <div id="create" className="rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6">
         <h2 className="text-xl font-bold">{isEn ? "Tournament CRUD" : "CRUD турниров"}</h2>
         <form action={createTournament} className="mt-4 grid gap-3 md:grid-cols-2">
           <input name="title" required placeholder={isEn ? "Tournament title" : "Название турнира"} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm" />
@@ -314,7 +314,7 @@ export default async function AdminTournamentsPage() {
         </form>
       </div>
 
-      <div id="edit" className="rounded-3xl border border-white/10 bg-white/5 p-6">
+      <div id="edit" className="rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6">
         <h2 className="text-lg font-semibold">{isEn ? "Tournament list" : "Список турниров"}</h2>
         <div className="mt-4 space-y-4">
           {(tournaments ?? []).map((t) => (
@@ -394,7 +394,7 @@ export default async function AdminTournamentsPage() {
       </div>
 
       <div id="content" className="grid gap-4 lg:grid-cols-3">
-        <div className="rounded-3xl border border-white/10 bg-white/5 p-6">
+        <div className="rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6">
           <h3 className="text-lg font-semibold">{isEn ? "Schedule table (Supabase)" : "Таблица расписания (Supabase)"}</h3>
           <form action={createScheduleItem} className="mt-3 grid gap-3 md:grid-cols-2">
             <select name="tournament_id" required className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm">
@@ -448,7 +448,7 @@ export default async function AdminTournamentsPage() {
           </div>
         </div>
 
-        <form action={savePage} className="rounded-3xl border border-white/10 bg-white/5 p-6">
+        <form action={savePage} className="rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6">
           <h3 className="text-lg font-semibold">{isEn ? "Tournament rules" : "Правила турниров"}</h3>
           <input type="hidden" name="slug" value="rules" />
           <input
@@ -467,7 +467,7 @@ export default async function AdminTournamentsPage() {
           </button>
         </form>
 
-        <form action={savePage} className="rounded-3xl border border-white/10 bg-white/5 p-6">
+        <form action={savePage} className="rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6">
           <h3 className="text-lg font-semibold">{isEn ? "Schedule / info" : "Расписание / инфо"}</h3>
           <input type="hidden" name="slug" value="tournaments-info" />
           <input

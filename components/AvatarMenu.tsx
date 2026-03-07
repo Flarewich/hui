@@ -59,6 +59,7 @@ export default function AvatarMenu({
       <button
         onClick={() => setOpen((v) => !v)}
         className="flex items-center gap-2 rounded-2xl px-2 py-1.5 text-cyan-50/90 outline outline-1 outline-cyan-300/30 bg-white/6 transition hover:bg-white/10"
+        aria-label={username}
       >
         <div className="h-8 w-8 overflow-hidden rounded-xl bg-gradient-to-br from-cyan-400 to-fuchsia-500">
           {avatarUrl ? (
@@ -70,11 +71,10 @@ export default function AvatarMenu({
             </div>
           )}
         </div>
-        <span className="hidden text-sm text-white/80 md:block">{username}</span>
       </button>
 
       {open && (
-        <div className="absolute right-0 mt-2 w-64 overflow-hidden rounded-2xl bg-[#060d1f]/90 outline outline-1 outline-cyan-300/35 backdrop-blur-xl">
+        <div className="absolute right-0 mt-2 w-64 max-w-[calc(100vw-1rem)] overflow-hidden rounded-2xl bg-[#060d1f]/90 outline outline-1 outline-cyan-300/35 backdrop-blur-xl">
           <Link className="block px-4 py-3 text-sm hover:bg-white/5" href="/profile" onClick={closeAll}>
             {labels.profile}
           </Link>

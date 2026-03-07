@@ -102,7 +102,7 @@ export default async function TournamentsPage({
     const rulesPage = await getSitePage("rules", locale);
     return (
       <PageShell title={t.tournamentsPage.rulesTitle} subtitle={t.tournamentsPage.rulesSubtitle}>
-        <div className="card p-6">
+        <div className="card p-4 sm:p-6">
           <Markdown content={rulesPage.content_md} />
         </div>
       </PageShell>
@@ -110,12 +110,49 @@ export default async function TournamentsPage({
   }
 
   if (tab === "info") {
-    const infoPage = await getSitePage("tournaments-info", locale);
     return (
       <PageShell title={t.tournamentsPage.infoTitle} subtitle={t.tournamentsPage.infoSubtitle}>
-        <div className="card p-6">
-          <Markdown content={infoPage.content_md} />
-        </div>
+        <section className="rounded-3xl border border-cyan-400/20 p-4 sm:p-6">
+          <div className="inline-flex rounded-full border border-cyan-300/35 bg-cyan-400/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-cyan-100">
+            {locale === "en" ? "Info" : "Инфо"}
+          </div>
+          <h2 className="mt-3 text-xl font-extrabold tracking-tight sm:text-2xl">
+            {locale === "en" ? "How tournaments work on WinStrike" : "Как работают турниры на WinStrike"}
+          </h2>
+          <p className="mt-2 max-w-3xl text-sm text-white/75 sm:text-base">
+            {locale === "en"
+              ? "Everything about formats, registration flow, match room access and tournament progression."
+              : "Все о форматах, регистрации, доступе в матч-рум и турнирной логике."}
+          </p>
+        </section>
+
+        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <article className="card p-4">
+            <div className="text-sm font-semibold">{locale === "en" ? "Registration" : "Регистрация"}</div>
+            <p className="mt-1 text-xs text-white/65 sm:text-sm">
+              {locale === "en"
+                ? "Choose tournament, confirm participation and create team for duo/squad."
+                : "Выберите турнир, подтвердите участие и создайте команду для duo/squad."}
+            </p>
+          </article>
+          <article className="card p-4">
+            <div className="text-sm font-semibold">{locale === "en" ? "Match room" : "Матч-рум"}</div>
+            <p className="mt-1 text-xs text-white/65 sm:text-sm">
+              {locale === "en"
+                ? "Room code and password become available before start for registered players."
+                : "Код комнаты и пароль открываются перед стартом для зарегистрированных участников."}
+            </p>
+          </article>
+          <article className="card p-4 sm:col-span-2 lg:col-span-1">
+            <div className="text-sm font-semibold">{locale === "en" ? "Bracket and status" : "Сетка и статусы"}</div>
+            <p className="mt-1 text-xs text-white/65 sm:text-sm">
+              {locale === "en"
+                ? "Statuses and tournament bracket update according to start time and participants."
+                : "Статусы и турнирная сетка обновляются в зависимости от времени старта и участников."}
+            </p>
+          </article>
+        </section>
+
       </PageShell>
     );
   }

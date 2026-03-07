@@ -267,7 +267,7 @@ export default async function TournamentDetailPage({
               <span className="rounded-full border border-white/15 bg-black/25 px-3 py-1 text-xs text-white/80">{tournament.games?.name ?? (isEn ? "Game not specified" : "Игра не указана")}</span>
             </div>
 
-            <h1 className="text-2xl font-extrabold tracking-tight sm:text-3xl md:text-4xl">{tournament.title}</h1>
+            <h1 className="break-words text-xl font-extrabold tracking-tight sm:text-3xl md:text-4xl">{tournament.title}</h1>
 
             <div className="mt-4 grid gap-2 text-sm text-white/80 md:grid-cols-2">
               <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">{isEn ? "Start" : "Старт"}: {toDate(tournament.start_at, locale)}</div>
@@ -358,7 +358,7 @@ export default async function TournamentDetailPage({
           <div className="mt-4 overflow-x-auto">
             <div className="flex min-w-max gap-4 pb-2">
               {bracketRounds.map((round) => (
-                <div key={round.title} className="min-w-[260px] space-y-3">
+                <div key={round.title} className="min-w-[220px] space-y-3 sm:min-w-[260px]">
                   <div className="text-xs font-semibold uppercase tracking-wide text-cyan-100">{round.title}</div>
                   {round.matches.map((match, idx) => (
                     <div key={match.id} className="rounded-2xl border border-white/12 bg-black/20 p-3">

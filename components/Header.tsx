@@ -31,8 +31,8 @@ export default async function Header() {
   return (
     <header className="site-nav sticky top-0 z-50 border-b border-white/10 bg-black/60 backdrop-blur">
       <div className="w-full px-3 py-2.5 sm:px-4 sm:py-3 lg:px-6 xl:px-8">
-        <div className="flex items-center justify-between gap-3">
-          <Link href="/" className="flex items-center gap-2 rounded-xl px-2 py-1 font-bold tracking-widest text-cyan-100/95 hover:bg-white/5">
+        <div className="flex items-center justify-between gap-2 sm:gap-3">
+          <Link href="/" className="flex items-center gap-2 rounded-xl px-1.5 py-1 font-bold tracking-widest text-cyan-100/95 hover:bg-white/5 sm:px-2">
             <span className="inline-block h-8 w-8 overflow-hidden rounded-xl outline outline-1 outline-cyan-300/40">
               <Image src="/ava-v2.png" alt="Logo" width={32} height={32} className="h-full w-full object-cover" />
             </span>
@@ -68,10 +68,10 @@ export default async function Header() {
             />
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex items-center gap-1.5 sm:gap-3">
             <LanguageSwitcher locale={locale} />
             {!user ? (
-              <Link href="/login" className="rounded-xl px-4 py-2 text-sm font-semibold text-cyan-50 outline outline-1 outline-cyan-300/50 bg-cyan-400/10 hover:bg-cyan-400/15">
+              <Link href="/login" className="rounded-xl bg-cyan-400/10 px-3 py-1.5 text-xs font-semibold text-cyan-50 outline outline-1 outline-cyan-300/50 hover:bg-cyan-400/15 sm:px-4 sm:py-2 sm:text-sm">
                 {t.header.login}
               </Link>
             ) : (

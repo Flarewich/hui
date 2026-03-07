@@ -205,14 +205,14 @@ export default async function AdminSponsorsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="rounded-3xl border border-white/10 bg-white/5 p-6">
+      <div className="rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6">
         <h2 className="text-xl font-bold">{isEn ? "Sponsors and roles" : "Спонсоры и роли"}</h2>
         <p className="mt-2 text-sm text-white/60">
           {isEn ? "Manage sponsors table and assign sponsor role to users." : "Управление таблицей sponsors и выдача роли sponsor пользователям."}
         </p>
       </div>
 
-      <div className="rounded-3xl border border-white/10 bg-white/5 p-6">
+      <div className="rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6">
         <h3 className="text-lg font-semibold">{isEn ? "Add sponsor" : "Добавить спонсора"}</h3>
         <form action={createSponsor} className="mt-4 grid gap-3 md:grid-cols-2">
           <input name="name" required placeholder={isEn ? "Name" : "Название"} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm" />
@@ -246,7 +246,7 @@ export default async function AdminSponsorsPage() {
         </div>
       )}
 
-      <div className="rounded-3xl border border-white/10 bg-white/5 p-4">
+      <div className="rounded-3xl border border-white/10 bg-white/5 p-3 sm:p-4">
         <h3 className="px-2 py-1 text-lg font-semibold">{isEn ? "Sponsors list" : "Список спонсоров"}</h3>
         <div className="mt-2 space-y-3">
           {(sponsors ?? []).map((s) => (
@@ -303,9 +303,54 @@ export default async function AdminSponsorsPage() {
         </div>
       )}
 
-      <div className="rounded-3xl border border-white/10 bg-white/5 p-4">
+      <div className="rounded-3xl border border-white/10 bg-white/5 p-3 sm:p-4">
         <h3 className="px-2 py-1 text-lg font-semibold">{isEn ? "Assign sponsor role" : "Выдать роль sponsor"}</h3>
-        <div className="mt-2 overflow-x-auto">
+        <div className="mt-2 space-y-3 sm:hidden">
+          {(users ?? []).map((u) => (
+            <article key={u.id} className="rounded-2xl border border-white/10 bg-black/20 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold">{u.username ?? "-"}</div>
+                  <div className="mt-1 text-xs text-white/60">{u.id.slice(0, 8)}...</div>
+                </div>
+                <div className="rounded-lg border border-white/15 bg-black/25 px-2 py-1 text-xs">{u.role ?? "user"}</div>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <form action={setRole}>
+                  <input type="hidden" name="id" value={u.id} />
+                  <input type="hidden" name="role" value="user" />
+                  <button
+                    type="submit"
+                    disabled={u.id === user.id}
+                    className="rounded-lg border border-white/20 bg-black/20 px-2.5 py-1 text-xs hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    user
+                  </button>
+                </form>
+                <form action={setRole}>
+                  <input type="hidden" name="id" value={u.id} />
+                  <input type="hidden" name="role" value="sponsor" />
+                  <button type="submit" className="rounded-lg border border-fuchsia-400/30 bg-fuchsia-500/10 px-2.5 py-1 text-xs text-fuchsia-100 hover:bg-fuchsia-500/20">
+                    sponsor
+                  </button>
+                </form>
+                <form action={setRole}>
+                  <input type="hidden" name="id" value={u.id} />
+                  <input type="hidden" name="role" value="admin" />
+                  <button type="submit" className="rounded-lg border border-cyan-400/30 bg-cyan-500/10 px-2.5 py-1 text-xs text-cyan-100 hover:bg-cyan-500/20">
+                    admin
+                  </button>
+                </form>
+              </div>
+            </article>
+          ))}
+          {(users?.length ?? 0) === 0 && !usersError && (
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-3 text-sm text-white/60">
+              {isEn ? "No users found." : "Пользователи не найдены."}
+            </div>
+          )}
+        </div>
+        <div className="mt-2 hidden overflow-x-auto sm:block">
           <table className="min-w-full text-left text-sm">
             <thead className="text-white/50">
               <tr>

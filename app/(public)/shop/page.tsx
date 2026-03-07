@@ -8,7 +8,7 @@ export default async function ShopPage() {
   const page = await getSitePage("shop", locale);
   return (
     <PageShell title={page.title} subtitle={locale === "en" ? "Store (will be expanded later)." : "Магазин (расширим позже)."}>
-      <div className="card p-6">
+      <div className="card p-4 sm:p-6">
         <Markdown content={page.content_md} />
       </div>
     </PageShell>

@@ -48,7 +48,7 @@ export default async function HelpPage() {
 
   return (
     <div className="space-y-6">
-      <section className="relative overflow-hidden rounded-3xl border border-cyan-400/20 p-6 md:p-8">
+      <section className="relative overflow-hidden rounded-3xl border border-cyan-400/20 p-4 sm:p-6 md:p-8">
         <div className="relative max-w-3xl">
           <h1 className="text-3xl font-extrabold tracking-tight md:text-4xl">{page.title}</h1>
           <p className="mt-3 text-sm text-white/75 md:text-base">
@@ -80,7 +80,7 @@ export default async function HelpPage() {
         ))}
       </section>
 
-      <section className="rounded-3xl border border-white/10 bg-white/5 p-6">
+      <section className="rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6">
         <h2 className="text-xl font-bold">{isEn ? "Platform rules" : "Правила платформы"}</h2>
         <div className="mt-4 text-sm text-white/85">
           <Markdown content={page.content_md} />

@@ -6,6 +6,9 @@ type Profile = {
   username: string | null;
   avatar_url: string | null;
   role: string | null;
+  is_banned?: boolean | null;
+  banned_until?: string | null;
+  restricted_until?: string | null;
 };
 
 export async function requireUser() {
@@ -18,9 +21,18 @@ export async function requireUser() {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("id, username, avatar_url, role")
+    .select("id, username, avatar_url, role, is_banned, banned_until, restricted_until")
     .eq("id", user.id)
     .single<Profile>();
+
+  const now = Date.now();
+  const isBanned =
+    Boolean(profile?.is_banned) ||
+    (profile?.banned_until ? new Date(profile.banned_until).getTime() > now : false);
+  const isRestricted = profile?.restricted_until ? new Date(profile.restricted_until).getTime() > now : false;
+
+  if (isBanned) redirect("/login?error=Ваш аккаунт заблокирован");
+  if (isRestricted) redirect("/login?error=Доступ временно ограничен");
 
   return { supabase, user, profile: profile ?? null };
 }

@@ -1,11 +1,48 @@
 import "./globals.css";
+import type { Metadata } from "next";
 import Header from "@/components/Header";
 import { getMessages } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/i18nServer";
 
-export const metadata = {
-  title: "WinStrike",
-  description: "Tournament platform",
+const siteName = "WinStrike";
+const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://winstrike.gg";
+const metaDescription =
+  "WinStrike is a cyber tournament platform with registration, schedules, match rooms, and live competition updates.";
+
+export const metadata: Metadata = {
+  title: {
+    default: siteName,
+    template: `%s | ${siteName}`,
+  },
+  description: metaDescription,
+  metadataBase: new URL(siteUrl),
+  icons: {
+    icon: [{ url: "/ava-v2.png", type: "image/png" }],
+    shortcut: [{ url: "/ava-v2.png", type: "image/png" }],
+    apple: [{ url: "/ava-v2.png", type: "image/png" }],
+  },
+  openGraph: {
+    type: "website",
+    locale: "ru_RU",
+    url: "/",
+    siteName,
+    title: siteName,
+    description: metaDescription,
+    images: [
+      {
+        url: "/ava-v2.png",
+        width: 512,
+        height: 512,
+        alt: `${siteName} logo`,
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: siteName,
+    description: metaDescription,
+    images: ["/ava-v2.png"],
+  },
 };
 
 function SocialIconLink({
@@ -55,6 +92,14 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <div className="space-y-1">
                 <div className="font-semibold text-white/90">(c) {new Date().getFullYear()} {t.footer.brand}</div>
                 <div className="text-white/60">support@tournaments</div>
+                <div className="flex flex-wrap items-center gap-3 pt-1 text-xs text-white/65">
+                  <a href="/privacy" className="hover:text-cyan-200">
+                    Privacy Policy
+                  </a>
+                  <a href="/terms" className="hover:text-cyan-200">
+                    Terms of Service
+                  </a>
+                </div>
               </div>
 
               <div className="flex items-center gap-2">

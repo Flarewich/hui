@@ -43,7 +43,7 @@ export default function NavDropdown({ isAdmin, labels }: NavDropdownProps) {
       </button>
 
       {open && (
-        <div className="absolute left-0 mt-2 w-56 overflow-hidden rounded-2xl bg-[#060d1f]/90 outline outline-1 outline-cyan-300/35 backdrop-blur-xl">
+        <div className="absolute right-0 mt-2 w-64 max-w-[calc(100vw-1rem)] overflow-hidden rounded-2xl bg-[#060d1f]/90 outline outline-1 outline-cyan-300/35 backdrop-blur-xl">
           <Link className={linkCls} href="/" onClick={() => setOpen(false)}>
             {labels.home}
           </Link>
