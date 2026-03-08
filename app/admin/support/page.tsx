@@ -24,6 +24,26 @@ type Profile = {
   role: string | null;
 };
 
+async function ensureLegacyTicketId(supabase: Awaited<ReturnType<typeof requireAdmin>>["supabase"], userId: string) {
+  const { data: existing } = await supabase
+    .from("support_tickets")
+    .select("id")
+    .eq("user_id", userId)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ id: string }>();
+
+  if (existing?.id) return existing.id;
+
+  const { data: created } = await supabase
+    .from("support_tickets")
+    .insert({ user_id: userId, status: "open" })
+    .select("id")
+    .single<{ id: string }>();
+
+  return created?.id ?? null;
+}
+
 export default async function AdminSupportPage({
   searchParams,
 }: {
@@ -74,17 +94,33 @@ export default async function AdminSupportPage({
     const body = String(formData.get("body") ?? "").trim();
 
     if (!threadId || !body) return;
+    const { data: selectedThread } = await supabase
+      .from("support_threads")
+      .select("id, user_id")
+      .eq("id", threadId)
+      .maybeSingle<{ id: string; user_id: string }>();
+    if (!selectedThread?.user_id) return;
+    const legacyTicketId = await ensureLegacyTicketId(supabase, selectedThread.user_id);
 
     await supabase.from("support_messages").insert({
       thread_id: threadId,
+      ticket_id: legacyTicketId,
       sender_id: user.id,
       body,
+      message: body,
     });
 
     await supabase
       .from("support_threads")
       .update({ updated_at: new Date().toISOString(), status: "open" })
       .eq("id", threadId);
+
+    if (legacyTicketId) {
+      await supabase
+        .from("support_tickets")
+        .update({ updated_at: new Date().toISOString(), status: "open" })
+        .eq("id", legacyTicketId);
+    }
 
     revalidatePath(`/admin/support?thread=${threadId}`);
     revalidatePath("/support");

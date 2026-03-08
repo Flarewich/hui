@@ -5,6 +5,34 @@ import { createSupabaseServerClient } from "@/lib/supabaseServer";
 import { ensureProfileForAuthUser } from "@/lib/profileSync";
 import { getRequestLocale } from "@/lib/i18nServer";
 
+function isRedirectException(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const maybeDigest = (error as { digest?: unknown }).digest;
+  return typeof maybeDigest === "string" && maybeDigest.startsWith("NEXT_REDIRECT");
+}
+
+function formatUntil(raw: string | null | undefined, locale: "ru" | "en") {
+  if (!raw) return null;
+  const value = new Date(raw);
+  if (Number.isNaN(value.getTime())) return null;
+  return new Intl.DateTimeFormat(locale === "en" ? "en-US" : "ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(value);
+}
+
+function blockedMessage(locale: "ru" | "en", isBanned: boolean, until: string | null) {
+  if (locale === "en") {
+    if (isBanned) return until ? `Your account is banned until ${until}.` : "Your account is banned.";
+    return until ? `Your account is temporarily restricted until ${until}.` : "Your account is temporarily restricted.";
+  }
+  if (isBanned) return until ? `Ваш аккаунт забанен до ${until}.` : "Ваш аккаунт забанен.";
+  return until ? `Ваш аккаунт временно ограничен до ${until}.` : "Ваш аккаунт временно ограничен.";
+}
+
 export default async function LoginPage({
   searchParams,
 }: {
@@ -25,6 +53,9 @@ export default async function LoginPage({
     "use server";
     const locale = await getRequestLocale();
     const isEn = locale === "en";
+    const invalidDataMsg = isEn
+      ? "Incorrect data entered. Please check and try again."
+      : "Вы ввели неправильные данные, перепроверьте.";
 
     try {
       const supabase = await createSupabaseRouteClient();
@@ -32,11 +63,32 @@ export default async function LoginPage({
       const password = String(formData.get("password") ?? "").trim();
 
       if (!email || !password) {
-        redirect(`/login?tab=signin&error=${encodeURIComponent(isEn ? "Enter email and password" : "Введите email и пароль")}`);
+        redirect(`/login?tab=signin&error=${encodeURIComponent(invalidDataMsg)}`);
       }
 
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) redirect(`/login?tab=signin&error=${encodeURIComponent(error.message)}`);
+      if (error) redirect(`/login?tab=signin&error=${encodeURIComponent(invalidDataMsg)}`);
+
+      if (data.user?.id) {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("is_banned, banned_until, restricted_until")
+          .eq("id", data.user.id)
+          .maybeSingle<{ is_banned?: boolean | null; banned_until?: string | null; restricted_until?: string | null }>();
+
+        const now = Date.now();
+        const isBanned =
+          Boolean(profile?.is_banned) ||
+          (profile?.banned_until ? new Date(profile.banned_until).getTime() > now : false);
+        const isRestricted = profile?.restricted_until ? new Date(profile.restricted_until).getTime() > now : false;
+
+        if (isBanned || isRestricted) {
+          await supabase.auth.signOut();
+          const until = isBanned ? formatUntil(profile?.banned_until, locale) : formatUntil(profile?.restricted_until, locale);
+          const message = blockedMessage(locale, isBanned, until);
+          redirect(`/login?tab=signin&error=${encodeURIComponent(message)}`);
+        }
+      }
 
       if (data.user?.id) {
         try {
@@ -45,7 +97,8 @@ export default async function LoginPage({
       }
       redirect("/");
     } catch (e) {
-      const message = e instanceof Error ? e.message : isEn ? "Sign in error" : "Ошибка входа";
+      if (isRedirectException(e)) throw e;
+      const message = isEn ? "Sign in error" : "Ошибка входа";
       redirect(`/login?tab=signin&error=${encodeURIComponent(message)}`);
     }
   }
@@ -54,6 +107,9 @@ export default async function LoginPage({
     "use server";
     const locale = await getRequestLocale();
     const isEn = locale === "en";
+    const invalidDataMsg = isEn
+      ? "Incorrect data entered. Please check and try again."
+      : "Вы ввели неправильные данные, перепроверьте.";
 
     try {
       const supabase = await createSupabaseRouteClient();
@@ -62,10 +118,10 @@ export default async function LoginPage({
       const usernameInput = String(formData.get("username") ?? "").trim();
 
       if (!email || !password) {
-        redirect(`/login?tab=signup&error=${encodeURIComponent(isEn ? "Enter email and password for sign up" : "Введите email и пароль для регистрации")}`);
+        redirect(`/login?tab=signup&error=${encodeURIComponent(invalidDataMsg)}`);
       }
       if (password.length < 6) {
-        redirect(`/login?tab=signup&error=${encodeURIComponent(isEn ? "Password must be at least 6 characters" : "Пароль должен быть не короче 6 символов")}`);
+        redirect(`/login?tab=signup&error=${encodeURIComponent(invalidDataMsg)}`);
       }
 
       const { data, error } = await supabase.auth.signUp({
@@ -73,7 +129,7 @@ export default async function LoginPage({
         password,
         options: { emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"}/auth/callback` },
       });
-      if (error) redirect(`/login?tab=signup&error=${encodeURIComponent(error.message)}`);
+      if (error) redirect(`/login?tab=signup&error=${encodeURIComponent(invalidDataMsg)}`);
 
       if (data.session?.user?.id) {
         try {
@@ -88,7 +144,8 @@ export default async function LoginPage({
 
       redirect(`/login?tab=signin&ok=${encodeURIComponent(isEn ? "Registration successful. Now sign in." : "Регистрация успешна. Теперь войдите в аккаунт.")}`);
     } catch (e) {
-      const message = e instanceof Error ? e.message : isEn ? "Sign up error" : "Ошибка регистрации";
+      if (isRedirectException(e)) throw e;
+      const message = isEn ? "Sign up error" : "Ошибка регистрации";
       redirect(`/login?tab=signup&error=${encodeURIComponent(message)}`);
     }
   }

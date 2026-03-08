@@ -1,6 +1,7 @@
 import "./globals.css";
 import type { Metadata } from "next";
 import Header from "@/components/Header";
+import SupportChatWidgetGate from "@/components/SupportChatWidgetGate";
 import { getMessages } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/i18nServer";
 
@@ -125,6 +126,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           </div>
         </footer>
         </div>
+        <SupportChatWidgetGate />
       </body>
     </html>
   );

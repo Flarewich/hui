@@ -47,6 +47,13 @@ export async function POST(request: Request) {
     return redirectToProfile(request, `error=${encodeURIComponent(msg(request, "You can delete only your own team", "Можно удалить только свою команду"))}`);
   }
 
+  // Remove linked registrations first to avoid trigger conflicts on team_id nullification.
+  const { error: regDeleteError } = await supabaseAdmin.from("registrations").delete().eq("team_id", teamId);
+
+  if (regDeleteError) {
+    return redirectToProfile(request, `error=${encodeURIComponent(msg(request, "Failed to delete team registrations", "Не удалось удалить регистрации команды"))}`);
+  }
+
   const { error: delError } = await supabaseAdmin.from("teams").delete().eq("id", teamId);
 
   if (delError) {

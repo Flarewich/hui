@@ -24,6 +24,26 @@ type Profile = {
   role: string | null;
 };
 
+async function ensureLegacyTicketId(supabase: Awaited<ReturnType<typeof requireUser>>["supabase"], userId: string) {
+  const { data: existing } = await supabase
+    .from("support_tickets")
+    .select("id")
+    .eq("user_id", userId)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ id: string }>();
+
+  if (existing?.id) return existing.id;
+
+  const { data: created } = await supabase
+    .from("support_tickets")
+    .insert({ user_id: userId, status: "open" })
+    .select("id")
+    .single<{ id: string }>();
+
+  return created?.id ?? null;
+}
+
 async function ensureUserThread(userId: string) {
   const { supabase } = await requireUser();
 
@@ -77,17 +97,27 @@ export default async function SupportPage() {
 
     const currentThread = await ensureUserThread(user.id);
     if (!currentThread?.id) return;
+    const legacyTicketId = await ensureLegacyTicketId(supabase, user.id);
 
     await supabase.from("support_messages").insert({
       thread_id: currentThread.id,
+      ticket_id: legacyTicketId,
       sender_id: user.id,
       body,
+      message: body,
     });
 
     await supabase
       .from("support_threads")
       .update({ updated_at: new Date().toISOString(), status: "open" })
       .eq("id", currentThread.id);
+
+    if (legacyTicketId) {
+      await supabase
+        .from("support_tickets")
+        .update({ updated_at: new Date().toISOString(), status: "open" })
+        .eq("id", legacyTicketId);
+    }
 
     revalidatePath("/support");
   }

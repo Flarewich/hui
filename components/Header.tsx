@@ -17,15 +17,29 @@ export default async function Header() {
     data: { user },
   } = await supabase.auth.getUser();
 
-  let profile: { username: string | null; avatar_url: string | null; role: string | null } | null = null;
+  let profile: {
+    username: string | null;
+    avatar_url: string | null;
+    role: string | null;
+    is_banned: boolean | null;
+    banned_until: string | null;
+    restricted_until: string | null;
+  } | null = null;
+  let canUseAccount = false;
 
   if (user) {
     const { data } = await supabase
       .from("profiles")
-      .select("username, avatar_url, role")
+      .select("username, avatar_url, role, is_banned, banned_until, restricted_until")
       .eq("id", user.id)
       .single();
     profile = data ?? null;
+
+    const now = new Date().getTime();
+    const bannedUntilTs = profile?.banned_until ? new Date(profile.banned_until).getTime() : 0;
+    const restrictedUntilTs = profile?.restricted_until ? new Date(profile.restricted_until).getTime() : 0;
+    const isBlocked = Boolean(profile?.is_banned) || bannedUntilTs > now || restrictedUntilTs > now;
+    canUseAccount = !isBlocked;
   }
 
   return (
@@ -54,7 +68,7 @@ export default async function Header() {
 
           <div className="md:hidden">
             <NavDropdown
-              isAdmin={profile?.role === "admin"}
+              isAdmin={canUseAccount && profile?.role === "admin"}
               labels={{
                 menu: locale === "en" ? "Menu" : "Меню",
                 home: t.header.home,
@@ -70,7 +84,7 @@ export default async function Header() {
 
           <div className="flex items-center gap-1.5 sm:gap-3">
             <LanguageSwitcher locale={locale} />
-            {!user ? (
+            {!user || !canUseAccount ? (
               <Link href="/login" className="rounded-xl bg-cyan-400/10 px-3 py-1.5 text-xs font-semibold text-cyan-50 outline outline-1 outline-cyan-300/50 hover:bg-cyan-400/15 sm:px-4 sm:py-2 sm:text-sm">
                 {t.header.login}
               </Link>

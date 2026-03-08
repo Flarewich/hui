@@ -8,7 +8,7 @@ import { getSitePage } from "@/lib/pages";
 import { getTournamentRegistrationRows } from "@/lib/registrationTable";
 import { createSupabaseServerClient } from "@/lib/supabaseServer";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { getTeamSizeLimit, getTournamentCapacity, isStartingInFiveMinutes } from "@/lib/tournamentLimits";
+import { getGameTournamentSettings, getTeamSizeLimit, getTournamentCapacity, isStartingInFiveMinutes } from "@/lib/tournamentLimits";
 import { getRequestLocale } from "@/lib/i18nServer";
 
 type Tournament = {
@@ -222,6 +222,7 @@ export default async function TournamentDetailPage({
   const myTeamMembersCountResult = myTeamId ? await supabaseAdmin.from("team_members").select("id", { count: "exact", head: true }).eq("team_id", myTeamId) : null;
   const myTeamMembersCount = myTeamMembersCountResult?.count ?? 0;
   const teamLimit = getTeamSizeLimit(tournament.mode, tournament.games?.slug ?? null, tournament.games?.name ?? null);
+  const gameSettings = getGameTournamentSettings(tournament.games?.slug ?? null, tournament.games?.name ?? null);
 
   const isClosed = dynamicStatus !== "upcoming";
   const capacity = getTournamentCapacity(tournament.mode, tournament.games?.slug ?? null, tournament.games?.name ?? null);
@@ -291,6 +292,20 @@ export default async function TournamentDetailPage({
 
             <div className="mt-3 rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-white/75">
               {isEn ? "Participants now" : "Участников сейчас"}: {currentRegistrations} / {capacity}
+            </div>
+            {needsTeam && (
+              <div className="mt-2 rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-white/65">
+                {isEn ? "Team size / max teams" : "Размер команды / максимум команд"}: {teamLimit} / {capacity}
+              </div>
+            )}
+            <div className="mt-2 rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-white/65">
+              {gameSettings.match_format && <div>{isEn ? "Match format" : "Формат матча"}: {gameSettings.match_format}</div>}
+              {gameSettings.semifinal_format && <div>{isEn ? "Semifinal" : "Полуфинал"}: {gameSettings.semifinal_format}</div>}
+              {gameSettings.final_format && <div>{isEn ? "Final" : "Финал"}: {gameSettings.final_format}</div>}
+              {typeof gameSettings.rounds === "number" && <div>{isEn ? "Rounds" : "Раунды"}: {gameSettings.rounds}</div>}
+              {typeof gameSettings.teams_per_match === "number" && (
+                <div>{isEn ? "Teams per match" : "Команд в матче"}: {gameSettings.teams_per_match}</div>
+              )}
             </div>
 
             {startsInFiveMinutes && (

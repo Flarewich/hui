@@ -82,11 +82,13 @@ export default function SupportChat({
             <div key={m.id} className={m.isMine ? "flex justify-end" : "flex justify-start"}>
               <div
                 className={[
-                  "max-w-[94%] rounded-2xl border px-3 py-2 text-sm sm:max-w-[85%]",
-                  m.isMine ? "border-cyan-400/20 bg-cyan-500/10" : "border-white/10 bg-black/20",
+                  "max-w-[94%] border px-3 py-2 text-sm sm:max-w-[85%]",
+                  m.isMine
+                    ? "rounded-2xl rounded-br-sm border-cyan-400/20 bg-cyan-500/10 text-right"
+                    : "rounded-2xl rounded-bl-sm border-white/10 bg-black/20 text-left",
                 ].join(" ")}
               >
-                <div className="text-[11px] text-white/50">{m.senderName}</div>
+                <div className="text-[11px] text-white/50">{m.isMine ? (isEn ? "You" : "Вы") : m.senderName}</div>
                 <div className="mt-1 whitespace-pre-wrap">{m.body}</div>
                 <div className="mt-1 text-[11px] text-white/40">{toDate(m.created_at, locale)}</div>
               </div>

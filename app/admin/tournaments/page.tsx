@@ -1,13 +1,16 @@
 ﻿import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { requireAdmin } from "@/lib/auth";
 import { defaultSitePages } from "@/lib/defaultSitePages";
 import { getRequestLocale } from "@/lib/i18nServer";
 import { ensureDefaultGames } from "@/lib/defaultGames";
+import { getGameTournamentSettings } from "@/lib/tournamentLimits";
 
 
 type Game = {
   id: string;
   name: string;
+  is_active?: boolean | null;
 };
 
 function gameKey(game: Game) {
@@ -49,6 +52,36 @@ function toInputDateTime(ts: string) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+function normalizeTournamentStatus(status: string, startAtIso: string, liveToken: "live" | "current") {
+  const normalized = String(status || "").trim().toLowerCase();
+  if (normalized !== "upcoming") return normalized || "upcoming";
+  const startTs = new Date(startAtIso).getTime();
+  if (!Number.isNaN(startTs) && startTs <= Date.now()) {
+    return liveToken;
+  }
+  return "upcoming";
+}
+
+async function resolveModeByGame(
+  supabase: Awaited<ReturnType<typeof requireAdmin>>["supabase"],
+  gameId: string,
+  modeRaw: string
+) {
+  const mode = (modeRaw || "solo").trim();
+  if (!gameId) return mode;
+
+  const { data: game } = await supabase
+    .from("games")
+    .select("slug, name")
+    .eq("id", gameId)
+    .maybeSingle<{ slug?: string | null; name?: string | null }>();
+
+  const settings = getGameTournamentSettings(game?.slug ?? null, game?.name ?? null);
+  if (settings.team_size <= 1) return "solo";
+  if (settings.team_size === 2) return "duo";
+  return "squad";
+}
+
 export default async function AdminTournamentsPage() {
   const locale = await getRequestLocale();
   const isEn = locale === "en";
@@ -61,7 +94,7 @@ export default async function AdminTournamentsPage() {
       .select("id, title, status, mode, start_at, prize_pool, game_id, room_code, room_password, room_instructions")
       .order("start_at", { ascending: true })
       .returns<Tournament[]>(),
-    supabase.from("games").select("id, name").eq("is_active", true).order("name").returns<Game[]>(),
+    supabase.from("games").select("id, name, is_active").order("name").returns<Game[]>(),
     supabase
       .from("site_pages")
       .select("slug, title, content_md")
@@ -75,6 +108,10 @@ export default async function AdminTournamentsPage() {
   ]);
 
   const pages = new Map((contentPages ?? []).map((p) => [p.slug, p]));
+  const liveToken: "live" | "current" =
+    (tournaments ?? []).some((t) => String(t.status ?? "").trim().toLowerCase() === "current")
+      ? "current"
+      : "live";
   const uniqueGames = Array.from(
     new Map((games ?? []).map((g) => [gameKey(g), g])).values()
   );
@@ -86,8 +123,8 @@ export default async function AdminTournamentsPage() {
 
     const title = String(formData.get("title") ?? "").trim();
     const game_id = String(formData.get("game_id") ?? "").trim();
-    const status = String(formData.get("status") ?? "upcoming").trim();
-    const mode = String(formData.get("mode") ?? "solo").trim();
+    const statusRaw = String(formData.get("status") ?? "upcoming").trim();
+    const modeRaw = String(formData.get("mode") ?? "solo").trim();
     const start_at = String(formData.get("start_at") ?? "").trim();
     const prize_pool = Number(formData.get("prize_pool") ?? 0);
     const room_code = String(formData.get("room_code") ?? "").trim();
@@ -96,10 +133,12 @@ export default async function AdminTournamentsPage() {
 
     if (!title || !start_at) return;
 
+    const mode = await resolveModeByGame(supabase, game_id, modeRaw);
+
     await supabase.from("tournaments").insert({
       title,
       game_id: game_id || null,
-      status,
+      status: statusRaw,
       mode,
       start_at: new Date(start_at).toISOString(),
       prize_pool: Number.isFinite(prize_pool) ? prize_pool : 0,
@@ -110,6 +149,7 @@ export default async function AdminTournamentsPage() {
 
     revalidatePath("/admin/tournaments");
     revalidatePath("/tournaments");
+    redirect("/admin/tournaments#edit");
   }
 
   async function updateTournament(formData: FormData) {
@@ -122,20 +162,22 @@ export default async function AdminTournamentsPage() {
 
     const title = String(formData.get("title") ?? "").trim();
     const game_id = String(formData.get("game_id") ?? "").trim();
-    const status = String(formData.get("status") ?? "upcoming").trim();
-    const mode = String(formData.get("mode") ?? "solo").trim();
+    const statusRaw = String(formData.get("status") ?? "upcoming").trim();
+    const modeRaw = String(formData.get("mode") ?? "solo").trim();
     const start_at = String(formData.get("start_at") ?? "").trim();
     const prize_pool = Number(formData.get("prize_pool") ?? 0);
     const room_code = String(formData.get("room_code") ?? "").trim();
     const room_password = String(formData.get("room_password") ?? "").trim();
     const room_instructions = String(formData.get("room_instructions") ?? "").trim();
 
+    const mode = await resolveModeByGame(supabase, game_id, modeRaw);
+
     await supabase
       .from("tournaments")
       .update({
         title,
         game_id: game_id || null,
-        status,
+        status: statusRaw,
         mode,
         start_at: start_at ? new Date(start_at).toISOString() : null,
         prize_pool: Number.isFinite(prize_pool) ? prize_pool : 0,
@@ -147,6 +189,7 @@ export default async function AdminTournamentsPage() {
 
     revalidatePath("/admin/tournaments");
     revalidatePath("/tournaments");
+    redirect("/admin/tournaments#edit");
   }
 
   async function deleteTournament(formData: FormData) {
@@ -280,7 +323,7 @@ export default async function AdminTournamentsPage() {
             <option value="">{isEn ? "Game not selected" : "Игра не выбрана"}</option>
             {uniqueGames.map((g) => (
               <option key={g.id} value={g.id}>
-                {g.name}
+                {g.name}{g.is_active === false ? " (inactive)" : ""}
               </option>
             ))}
           </select>
@@ -328,14 +371,18 @@ export default async function AdminTournamentsPage() {
                   <option value="">{isEn ? "Game not selected" : "Игра не выбрана"}</option>
                   {uniqueGames.map((g) => (
                     <option key={g.id} value={g.id}>
-                      {g.name}
+                      {g.name}{g.is_active === false ? " (inactive)" : ""}
                     </option>
                   ))}
                 </select>
 
-                <select name="status" defaultValue={t.status} className="rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm">
+                <select
+                  name="status"
+                  defaultValue={normalizeTournamentStatus(t.status, t.start_at, liveToken)}
+                  className="rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm"
+                >
                   <option value="upcoming">upcoming</option>
-                  <option value="live">live</option>
+                  <option value={liveToken}>{liveToken}</option>
                   <option value="finished">finished</option>
                 </select>
 
@@ -489,6 +536,9 @@ export default async function AdminTournamentsPage() {
     </div>
   );
 }
+
+
+
 
 
 
