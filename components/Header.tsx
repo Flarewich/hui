@@ -1,12 +1,14 @@
 import Link from "next/link";
 import Image from "next/image";
+import { countUnreadAdminChat } from "@/lib/adminChat";
 import { getMessages } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/i18nServer";
-import { countUnreadNotifications } from "@/lib/notifications";
+import { countUnreadNotifications, listUserNotifications } from "@/lib/notifications";
 import { getCurrentSession } from "@/lib/sessionAuth";
 import AvatarMenu from "./AvatarMenu";
 import LanguageSwitcher from "./LanguageSwitcher";
 import NavDropdown from "./NavDropdown";
+import NotificationBell from "./NotificationBell";
 import TournamentsMenu from "./TournamentsMenu";
 
 export default async function Header() {
@@ -15,7 +17,13 @@ export default async function Header() {
   const session = await getCurrentSession();
   const user = session?.user ?? null;
   const profile = session?.profile ?? null;
-  const unreadNotifications = user ? await countUnreadNotifications(user.id) : 0;
+  const [unreadNotifications, latestNotifications, adminChatUnreadCount] = user
+    ? await Promise.all([
+        countUnreadNotifications(user.id),
+        listUserNotifications(user.id, 8),
+        profile?.role === "admin" ? countUnreadAdminChat(user.id) : Promise.resolve(0),
+      ])
+    : [0, [], 0];
 
   const canUseAccount = Boolean(user && profile && !profile.is_blocked);
 
@@ -66,13 +74,30 @@ export default async function Header() {
                 {t.header.login}
               </Link>
             ) : (
-              <AvatarMenu
-                username={profile?.username ?? user.email ?? "User"}
-                avatarUrl={profile?.avatar_url ?? null}
-                isAdmin={profile?.role === "admin"}
-                unreadNotifications={unreadNotifications}
-                labels={t.avatarMenu}
-              />
+              <>
+                <NotificationBell
+                  locale={locale}
+                  initialNotifications={latestNotifications}
+                  initialUnreadCount={unreadNotifications}
+                  labels={{
+                    open: locale === "en" ? "Open notifications" : "Открыть уведомления",
+                    title: locale === "en" ? "Notifications" : "Уведомления",
+                    empty: locale === "en" ? "No notifications yet." : "Пока нет уведомлений.",
+                    markAllRead: locale === "en" ? "Mark all read" : "Прочитать все",
+                    viewAll: locale === "en" ? "View all" : "Все уведомления",
+                    openItem: locale === "en" ? "Open" : "Открыть",
+                    newLabel: locale === "en" ? "new" : "новое",
+                    readLabel: locale === "en" ? "read" : "прочитано",
+                  }}
+                />
+                <AvatarMenu
+                  username={profile?.username ?? user.email ?? "User"}
+                  avatarUrl={profile?.avatar_url ?? null}
+                  isAdmin={profile?.role === "admin"}
+                  adminChatUnreadCount={adminChatUnreadCount}
+                  labels={t.avatarMenu}
+                />
+              </>
             )}
           </div>
         </div>

@@ -85,9 +85,19 @@ export default async function AdminPage() {
           <div className="mt-1 text-sm text-white/60">{isEn ? "Reply to users and manage ticket status." : "Ответы пользователям и статусы обращений."}</div>
         </Link>
 
+        <Link href="/admin/chat" className="rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-5 hover:bg-white/10">
+          <div className="text-lg font-semibold">{isEn ? "Admin chat" : "Чат админов"}</div>
+          <div className="mt-1 text-sm text-white/60">{isEn ? "Internal real-time communication for admins." : "Внутренний realtime-чат для администраторов."}</div>
+        </Link>
+
+        <Link href="/admin/logs" className="rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-5 hover:bg-white/10">
+          <div className="text-lg font-semibold">{isEn ? "Activity logs" : "Логи действий"}</div>
+          <div className="mt-1 text-sm text-white/60">{isEn ? "User actions and key site events." : "Действия пользователей и ключевые события сайта."}</div>
+        </Link>
+
         <Link href="/admin/users" className="rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-5 hover:bg-white/10">
           <div className="text-lg font-semibold">{isEn ? "Users and roles" : "Пользователи и роли"}</div>
-          <div className="mt-1 text-sm text-white/60">{isEn ? "Assign user/sponsor/admin roles." : "Назначение ролей user/sponsor/admin."}</div>
+          <div className="mt-1 text-sm text-white/60">{isEn ? "Assign user/sponsor/admin roles." : "Назначение ролей user, sponsor и admin."}</div>
         </Link>
 
         <Link href="/admin/sponsors" className="rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-5 hover:bg-white/10">

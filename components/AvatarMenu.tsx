@@ -16,11 +16,13 @@ export default function AvatarMenu({
   isAdmin,
   labels,
   unreadNotifications = 0,
+  adminChatUnreadCount = 0,
 }: {
   username: string;
   avatarUrl: string | null;
   isAdmin: boolean;
   unreadNotifications?: number;
+  adminChatUnreadCount?: number;
   labels: {
     profile: string;
     notifications: string;
@@ -31,6 +33,8 @@ export default function AvatarMenu({
     editTournaments: string;
     rulesAndSchedule: string;
     supportChat: string;
+    adminChat: string;
+    activityLogs: string;
     usersAndRoles: string;
     sponsors: string;
     emails: string;
@@ -87,7 +91,7 @@ export default function AvatarMenu({
           <Link className="block px-4 py-3 text-sm hover:bg-white/5" href="/profile" onClick={closeAll}>
             {labels.profile}
           </Link>
-          <Link className="flex items-center justify-between px-4 py-3 text-sm hover:bg-white/5" href="/profile#notifications" onClick={closeAll}>
+          <Link className="flex items-center justify-between px-4 py-3 text-sm hover:bg-white/5" href="/profile" onClick={closeAll}>
             <span>{labels.notifications}</span>
             {unreadNotifications > 0 && (
               <span className="rounded-full bg-cyan-300 px-1.5 py-0.5 text-[10px] font-bold text-black">
@@ -126,6 +130,19 @@ export default function AvatarMenu({
                   </Link>
                   <Link className="block px-5 py-2 text-xs text-white/80 hover:bg-white/5" href="/admin/support" onClick={closeAll}>
                     {labels.supportChat}
+                  </Link>
+                  <Link className="block px-5 py-2 text-xs text-white/80 hover:bg-white/5" href="/admin/chat" onClick={closeAll}>
+                    <span className="flex items-center justify-between">
+                      <span>{labels.adminChat}</span>
+                      {adminChatUnreadCount > 0 && (
+                        <span className="rounded-full bg-cyan-300 px-1.5 py-0.5 text-[10px] font-bold text-black">
+                          {adminChatUnreadCount > 99 ? "99+" : adminChatUnreadCount}
+                        </span>
+                      )}
+                    </span>
+                  </Link>
+                  <Link className="block px-5 py-2 text-xs text-white/80 hover:bg-white/5" href="/admin/logs" onClick={closeAll}>
+                    {labels.activityLogs}
                   </Link>
                   <Link className="block px-5 py-2 text-xs text-white/80 hover:bg-white/5" href="/admin/users" onClick={closeAll}>
                     {labels.usersAndRoles}

@@ -1,8 +1,17 @@
 import { NextResponse } from "next/server";
+import { logAuditEvent } from "@/lib/audit";
 import { getUserEmail, listAdminRecipients, queueEmail } from "@/lib/email";
+import { savePublicUpload } from "@/lib/localUploads";
 import { createNotification, createNotifications } from "@/lib/notifications";
 import { getCurrentSession } from "@/lib/sessionAuth";
-import { appendSupportMessage, ensureUserThread, getProfilesByIds, getThreadMessages, type SupportThread } from "@/lib/support";
+import {
+  appendSupportMessage,
+  ensureSupportAttachmentColumns,
+  ensureUserThread,
+  getProfilesByIds,
+  getThreadMessages,
+  type SupportThread,
+} from "@/lib/support";
 import { pgMaybeOne, pgQuery, pgRows } from "@/lib/postgres";
 import { assertSameOriginRequest, consumeRateLimit, getRequestIp, sanitizeTextInput } from "@/lib/security";
 
@@ -16,6 +25,29 @@ type Profile = {
   banned_until?: string | null;
   restricted_until?: string | null;
 };
+
+type AdminThreadUnreadRow = {
+  thread_id: string;
+  unread_count: string;
+};
+
+const MAX_SUPPORT_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+const ALLOWED_SUPPORT_ATTACHMENT_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+  "image/avif",
+  "video/mp4",
+  "video/webm",
+  "video/quicktime",
+]);
+
+function getAttachmentKind(mime: string) {
+  if (mime.startsWith("image/")) return "image";
+  if (mime.startsWith("video/")) return "video";
+  return "file";
+}
 
 function isBlocked(profile: Profile | null) {
   const now = Date.now();
@@ -49,6 +81,7 @@ export async function GET(request: Request) {
   }
 
   const isAdmin = me?.role === "admin" || user.app_metadata.role === "admin";
+  await ensureSupportAttachmentColumns();
   if (!isAdmin) {
     const thread = await ensureUserThread(user.id);
     if (!thread) return NextResponse.json({ error: "Thread not found" }, { status: 404 });
@@ -79,6 +112,34 @@ export async function GET(request: Request) {
   const userIds = [...new Set(threads.map((t) => t.user_id))];
   const users = userIds.length ? await getProfilesByIds(userIds) : [];
   const userMap = new Map(users.map((u) => [u.id, u.username]));
+  const unreadRows = threads.length
+    ? await pgRows<AdminThreadUnreadRow>(
+        `
+          with last_admin_reply as (
+            select
+              sm.thread_id,
+              max(sm.created_at) as last_admin_at
+            from support_messages sm
+            join profiles p on p.id = sm.sender_id
+            where sm.thread_id = any($1::uuid[])
+              and p.role = 'admin'
+            group by sm.thread_id
+          )
+          select
+            sm.thread_id,
+            count(*)::text as unread_count
+          from support_messages sm
+          join profiles p on p.id = sm.sender_id
+          left join last_admin_reply lar on lar.thread_id = sm.thread_id
+          where sm.thread_id = any($1::uuid[])
+            and coalesce(p.role, 'user') <> 'admin'
+            and (lar.last_admin_at is null or sm.created_at > lar.last_admin_at)
+          group by sm.thread_id
+        `,
+        [threads.map((thread) => thread.id)]
+      )
+    : [];
+  const unreadByThreadId = new Map(unreadRows.map((row) => [row.thread_id, Number(row.unread_count ?? 0)]));
   const messages = activeThreadId ? await getThreadMessages(activeThreadId) : [];
 
   return NextResponse.json({
@@ -86,6 +147,7 @@ export async function GET(request: Request) {
     threads: threads.map((t) => ({
       ...t,
       label: userMap.get(t.user_id) ?? `User ${t.user_id.slice(0, 8)}`,
+      unread_count: unreadByThreadId.get(t.id) ?? 0,
     })),
     activeThreadId,
     messages,
@@ -119,16 +181,41 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Blocked" }, { status: 403 });
   }
 
-  const bodyData = (await request.json().catch(() => null)) as
-    | { body?: string; threadId?: string }
-    | null;
-  const body = sanitizeTextInput(bodyData?.body, { maxLength: 2000, multiline: true });
-  const incomingThreadId = sanitizeTextInput(bodyData?.threadId, { maxLength: 120 });
-  if (!body) {
+  await ensureSupportAttachmentColumns();
+
+  let body = "";
+  let incomingThreadId = "";
+  let attachmentFile: File | null = null;
+
+  const contentType = request.headers.get("content-type") ?? "";
+  if (contentType.includes("multipart/form-data")) {
+    const formData = await request.formData();
+    body = sanitizeTextInput(formData.get("body"), { maxLength: 2000, multiline: true });
+    incomingThreadId = sanitizeTextInput(formData.get("threadId"), { maxLength: 120 });
+    const rawFile = formData.get("attachment");
+    attachmentFile = rawFile instanceof File && rawFile.size > 0 ? rawFile : null;
+  } else {
+    const bodyData = (await request.json().catch(() => null)) as
+      | { body?: string; threadId?: string }
+      | null;
+    body = sanitizeTextInput(bodyData?.body, { maxLength: 2000, multiline: true });
+    incomingThreadId = sanitizeTextInput(bodyData?.threadId, { maxLength: 120 });
+  }
+
+  if (!body && !attachmentFile) {
     return NextResponse.json({ error: "Empty message" }, { status: 400 });
   }
   if (body.length > 2000) {
     return NextResponse.json({ error: "Message too long" }, { status: 400 });
+  }
+
+  if (attachmentFile) {
+    if (!ALLOWED_SUPPORT_ATTACHMENT_TYPES.has(attachmentFile.type)) {
+      return NextResponse.json({ error: "Unsupported attachment type" }, { status: 400 });
+    }
+    if (attachmentFile.size > MAX_SUPPORT_ATTACHMENT_BYTES) {
+      return NextResponse.json({ error: "Attachment is too large" }, { status: 400 });
+    }
   }
 
   const isAdmin = me?.role === "admin" || user.app_metadata.role === "admin";
@@ -180,11 +267,44 @@ export async function POST(request: Request) {
     targetUserId = selectedThread.user_id;
   }
 
+  let attachmentUrl: string | null = null;
+  let attachmentKind: string | null = null;
+  let attachmentName: string | null = null;
+  let attachmentMime: string | null = null;
+
+  if (attachmentFile) {
+    attachmentUrl = await savePublicUpload({
+      folder: "support",
+      entityId: threadId,
+      file: attachmentFile,
+    });
+    attachmentKind = getAttachmentKind(attachmentFile.type);
+    attachmentName = attachmentFile.name || null;
+    attachmentMime = attachmentFile.type || null;
+  }
+
   await appendSupportMessage({
     threadId,
     senderId: user.id,
     targetUserId,
     body,
+    attachmentUrl,
+    attachmentKind,
+    attachmentName,
+    attachmentMime,
+  });
+
+  await logAuditEvent({
+    userId: user.id,
+    action: isAdmin ? "support.reply_sent" : "support.message_sent",
+    ipAddress: ip,
+    metadata: {
+      threadId,
+      targetUserId,
+      hasAttachment: Boolean(attachmentUrl),
+      attachmentKind,
+      bodyPreview: body.slice(0, 120),
+    },
   });
 
   if (isAdmin) {

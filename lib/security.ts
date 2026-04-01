@@ -43,6 +43,19 @@ function getExpectedRequestOrigin(request: Request) {
   return normalizeOrigin(new URL(request.url).origin);
 }
 
+export function getSafeRequestOrigin(request: Request) {
+  return (
+    getExpectedRequestOrigin(request) ||
+    process.env.APP_BASE_URL ||
+    process.env.NEXT_PUBLIC_SITE_URL ||
+    "http://127.0.0.1:3000"
+  );
+}
+
+export function getSafeRequestUrl(request: Request, path: string) {
+  return new URL(path, getSafeRequestOrigin(request));
+}
+
 export async function ensureSecurityTables() {
   if (ensuredSecurityTables) return;
 

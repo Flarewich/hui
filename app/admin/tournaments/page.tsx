@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { requireAdmin } from "@/lib/auth";
 import { defaultSitePages } from "@/lib/defaultSitePages";
 import { getRequestLocale } from "@/lib/i18nServer";
+import { createNotifications, listAllNotificationUserIds } from "@/lib/notifications";
 import { ensureDefaultGames } from "@/lib/defaultGames";
 import { getGameTournamentSettings } from "@/lib/tournamentLimits";
 import { pgMaybeOne, pgQuery, pgRows } from "@/lib/postgres";
@@ -262,10 +263,11 @@ export default async function AdminTournamentsPage() {
 
     const mode = await resolveModeByGame(game_id, modeRaw);
 
-    await pgQuery(
+    const inserted = await pgMaybeOne<{ id: string; title: string }>(
       `
         insert into tournaments (title, game_id, status, mode, start_at, prize_pool, max_teams, room_code, room_password, room_instructions)
         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        returning id, title
       `,
       [
         title,
@@ -280,6 +282,19 @@ export default async function AdminTournamentsPage() {
         room_instructions || null,
       ]
     );
+
+    if (inserted?.id) {
+      const userIds = await listAllNotificationUserIds();
+      await createNotifications(
+        userIds.map((userId) => ({
+          userId,
+          type: "tournament_created",
+          title: isEn ? "New tournament available" : "Новый турнир уже доступен",
+          body: inserted.title,
+          href: `/tournaments/${inserted.id}`,
+        }))
+      );
+    }
 
     revalidatePath("/admin/tournaments");
     revalidatePath("/tournaments");

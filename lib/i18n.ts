@@ -33,6 +33,8 @@ type Messages = {
     editTournaments: string;
     rulesAndSchedule: string;
     supportChat: string;
+    adminChat: string;
+    activityLogs: string;
     usersAndRoles: string;
     sponsors: string;
     emails: string;
@@ -101,6 +103,8 @@ const ru: Messages = {
     editTournaments: "Редактировать турниры",
     rulesAndSchedule: "Правила и расписание",
     supportChat: "Чат поддержки",
+    adminChat: "Чат админов",
+    activityLogs: "Логи действий",
     usersAndRoles: "Пользователи и роли",
     sponsors: "Спонсоры",
     emails: "Письма",
@@ -169,6 +173,8 @@ const en: Messages = {
     editTournaments: "Edit tournaments",
     rulesAndSchedule: "Rules and schedule",
     supportChat: "Support chat",
+    adminChat: "Admin chat",
+    activityLogs: "Activity logs",
     usersAndRoles: "Users and roles",
     sponsors: "Sponsors",
     emails: "Emails",

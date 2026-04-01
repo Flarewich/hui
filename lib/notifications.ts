@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import { pgQuery, pgRows, pgOne } from "@/lib/postgres";
+import { notifyNotificationEvent } from "@/lib/notificationsRealtime";
 
 export type AppNotificationRow = {
   id: string;
@@ -51,13 +52,23 @@ export async function createNotification(params: {
   href?: string | null;
 }) {
   await ensureNotificationTables();
+  const id = randomUUID();
+  const createdAt = new Date().toISOString();
   await pgQuery(
     `
-      insert into app_notifications (id, user_id, type, title, body, href)
-      values ($1, $2, $3, $4, $5, $6)
+      insert into app_notifications (id, user_id, type, title, body, href, created_at)
+      values ($1, $2, $3, $4, $5, $6, $7)
     `,
-    [randomUUID(), params.userId, params.type, params.title, params.body ?? null, params.href ?? null]
+    [id, params.userId, params.type, params.title, params.body ?? null, params.href ?? null, createdAt]
   );
+  await notifyNotificationEvent({
+    id,
+    userId: params.userId,
+    title: params.title,
+    body: params.body ?? null,
+    href: params.href ?? null,
+    createdAt,
+  });
 }
 
 export async function createNotifications(params: Array<{
@@ -130,6 +141,17 @@ export async function listAdminUserIds() {
       select id
       from profiles
       where role = 'admin'
+    `
+  );
+  return rows.map((row) => row.id);
+}
+
+export async function listAllNotificationUserIds() {
+  await ensureNotificationTables();
+  const rows = await pgRows<{ id: string }>(
+    `
+      select id
+      from profiles
     `
   );
   return rows.map((row) => row.id);

@@ -3,7 +3,6 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { getRequestLocale } from "@/lib/i18nServer";
-import { countUnreadNotifications, listUserNotifications, markAllNotificationsRead } from "@/lib/notifications";
 import { ensureProfilePayoutColumns } from "@/lib/profilePayouts";
 import { getTeamSizeLimit } from "@/lib/tournamentLimits";
 import { pgMaybeOne, pgQuery, pgRows } from "@/lib/postgres";
@@ -105,9 +104,7 @@ export default async function ProfilePage({
     [user.id]
   );
 
-  const [notifications, unreadNotifications, nextTournament, openSupportThreads] = await Promise.all([
-    listUserNotifications(user.id, 8),
-    countUnreadNotifications(user.id),
+  const [nextTournament, openSupportThreads] = await Promise.all([
     pgMaybeOne<{ id: string; title: string; start_at: string }>(
       `
         select t.id, t.title, t.start_at
@@ -282,14 +279,6 @@ export default async function ProfilePage({
     redirect(`/profile?ok=${encodeURIComponent(isEn ? "Payment details sent" : "Реквизиты отправлены")}`);
   }
 
-  async function readNotifications() {
-    "use server";
-
-    const { user } = await requireUser();
-    await markAllNotificationsRead(user.id);
-    revalidatePath("/profile");
-  }
-
   return (
     <div className="space-y-5 sm:space-y-6">
       <div className="grid gap-5 sm:gap-6 xl:grid-cols-[1.1fr_1fr]">
@@ -311,7 +300,6 @@ export default async function ProfilePage({
 
             <div>
               <h1 className="text-2xl font-extrabold tracking-tight">{isEn ? "Profile" : "Личный кабинет"}</h1>
-              <p className="mt-1 text-sm text-white/70">{isEn ? "Manage username, avatar, teams and registrations." : "Управляйте ником, аватаром, командами и регистрациями."}</p>
               <div className="mt-3 inline-flex rounded-full border border-white/15 bg-black/25 px-3 py-1 text-xs text-white/80">
                 {isEn ? "Role" : "Роль"}: {profile?.role ?? "user"}
               </div>
@@ -327,7 +315,6 @@ export default async function ProfilePage({
 
         <form action="/profile/update" method="post" encType="multipart/form-data" className="rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6">
           <h2 className="text-lg font-semibold">{isEn ? "Edit profile" : "Редактирование профиля"}</h2>
-          <p className="mt-1 text-sm text-white/60">{isEn ? "Username updates instantly, avatar uploads from file." : "Ник обновляется сразу, аватар загружается файлом."}</p>
 
           {sp.error && <div className="mt-4 rounded-2xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{sp.error}</div>}
           {sp.ok && <div className="mt-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-200">{sp.ok}</div>}
@@ -366,9 +353,6 @@ export default async function ProfilePage({
                 className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm uppercase outline-none focus:border-cyan-400/50"
                 placeholder="DE89 3704 0044 0532 0130 00"
               />
-              <span className="text-[11px] text-white/50">
-                {isEn ? "Optional. Saved in your profile for manual payouts." : "Необязательно. Сохраняется в профиле для ручных выплат."}
-              </span>
             </label>
 
             {profile?.avatar_url && (
@@ -390,11 +374,7 @@ export default async function ProfilePage({
         </form>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <div className="rounded-3xl border border-white/10 bg-white/5 p-4">
-          <div className="text-xs text-white/60">{isEn ? "Unread notifications" : "Непрочитанные уведомления"}</div>
-          <div className="mt-2 text-2xl font-bold">{unreadNotifications}</div>
-        </div>
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <div className="rounded-3xl border border-white/10 bg-white/5 p-4">
           <div className="text-xs text-white/60">{isEn ? "Open support threads" : "Открытые обращения"}</div>
           <div className="mt-2 text-2xl font-bold">{Number(openSupportThreads?.count ?? 0)}</div>
@@ -410,69 +390,14 @@ export default async function ProfilePage({
         </div>
       </div>
 
-      <div id="notifications" className="rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-semibold">{isEn ? "Notifications" : "Уведомления"}</h2>
-            <p className="mt-1 text-sm text-white/60">{isEn ? "Platform updates about tournaments, support and payouts." : "Системные события по турнирам, поддержке и выплатам."}</p>
-          </div>
-          <form action={readNotifications}>
-            <button type="submit" className="rounded-xl border border-white/15 bg-black/20 px-3 py-1.5 text-xs hover:bg-white/5">
-              {isEn ? "Mark all as read" : "Прочитать все"}
-            </button>
-          </form>
-        </div>
-
-        <div className="mt-4 space-y-3">
-          {notifications.map((item) => (
-            <div key={item.id} className="rounded-2xl border border-white/10 bg-black/20 p-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <div className="text-sm font-semibold">{item.title}</div>
-                  {item.body && <div className="mt-1 text-sm text-white/75">{item.body}</div>}
-                </div>
-                <div className="rounded-xl border border-white/15 bg-black/25 px-3 py-1 text-[11px]">
-                  {item.is_read ? (isEn ? "read" : "прочитано") : (isEn ? "new" : "новое")}
-                </div>
-              </div>
-              <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-white/55">
-                <span>{toDate(item.created_at, locale)}</span>
-                {item.href && (
-                  <Link href={item.href} className="text-cyan-300 hover:text-cyan-200">
-                    {isEn ? "Open" : "Открыть"} →
-                  </Link>
-                )}
-              </div>
-            </div>
-          ))}
-
-          {notifications.length === 0 && (
-            <div className="rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-white/60">
-              {isEn ? "No notifications yet." : "Пока нет уведомлений."}
-            </div>
-          )}
-        </div>
-      </div>
-
       <div id="teams" className="rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6">
         <h2 className="text-lg font-semibold">{isEn ? "My teams" : "Мои команды"}</h2>
-        <p className="mt-1 text-sm text-white/60">
-          {isEn
-            ? "For squad max 5 players. For duo max 2 players. Team creation is available only during tournament registration."
-            : "Для squad максимум 5 игроков. Для duo максимум 2 игрока. Создание команды теперь доступно только при регистрации на турнир."}
-        </p>
 
         {teamsTableMissing && (
           <div className="mt-4 rounded-2xl border border-amber-400/30 bg-amber-500/10 p-3 text-sm text-amber-100">
             {isEn
               ? "Teams table is not configured in DB yet. Apply SQL migration for teams and team_members."
               : "Таблица команд еще не настроена в базе. Примените SQL-миграцию для teams и team_members."}
-          </div>
-        )}
-
-        {!teamsTableMissing && (
-          <div className="mt-4 rounded-2xl border border-cyan-400/25 bg-cyan-500/10 p-3 text-sm text-cyan-100">
-            {isEn ? "Team is created automatically during duo/squad tournament registration." : "Команда создается автоматически во время регистрации на турнир формата duo/squad."}
           </div>
         )}
 
@@ -488,7 +413,7 @@ export default async function ProfilePage({
                   <div>
                     <div className="text-sm font-semibold">{team.name}</div>
                     <div className="mt-1 text-xs text-white/60">
-                      {isEn ? "Mode" : "Режим"}: {modeLabel(team.mode)} • {isEn ? "Members" : "Участников"}: {count}/{limit}
+                      {isEn ? "Mode" : "Режим"}: {modeLabel(team.mode)} / {isEn ? "Members" : "Участников"}: {count}/{limit}
                     </div>
                     <div className="mt-1 text-xs text-white/55">
                       {isEn ? "Access" : "Доступ"}: {team.join_type === "password" ? (isEn ? "password" : "по паролю") : (isEn ? "open" : "открытый")}
@@ -526,7 +451,6 @@ export default async function ProfilePage({
       {!teamsTableMissing && (
         <div className="rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6">
           <h2 className="text-lg font-semibold">{isEn ? "Open teams" : "Открытые команды"}</h2>
-          <p className="mt-1 text-sm text-white/60">{isEn ? "You can join another team if there is a free slot." : "Вы можете присоединиться к другой команде, если в ней есть свободное место."}</p>
 
           <div className="mt-4 grid gap-3 md:grid-cols-2">
             {openTeams.map((team) => {
@@ -538,7 +462,7 @@ export default async function ProfilePage({
                 <div key={team.id} className="rounded-2xl border border-white/10 bg-black/20 p-4">
                   <div className="text-sm font-semibold">{team.name}</div>
                   <div className="mt-1 text-xs text-white/60">
-                    {isEn ? "Mode" : "Режим"}: {modeLabel(team.mode)} • {isEn ? "Members" : "Участников"}: {count}/{limit}
+                    {isEn ? "Mode" : "Режим"}: {modeLabel(team.mode)} / {isEn ? "Members" : "Участников"}: {count}/{limit}
                   </div>
                   <div className="mt-1 text-xs text-white/55">
                     {isEn ? "Access" : "Доступ"}: {team.join_type === "password" ? (isEn ? "password" : "по паролю") : (isEn ? "open" : "открытый")}
@@ -580,11 +504,6 @@ export default async function ProfilePage({
 
       <div className="rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6">
         <h2 className="text-lg font-semibold">{isEn ? "My prizes" : "Мои призы"}</h2>
-        <p className="mt-1 text-sm text-white/60">
-          {isEn
-            ? "If you are a tournament winner, send payment details here."
-            : "Если вы победитель турнира, отправьте реквизиты здесь."}
-        </p>
 
         <div className="mt-4 space-y-3">
           {prizeClaims.map((claim) => (
@@ -698,13 +617,13 @@ export default async function ProfilePage({
               <div key={`${r.tournament_id ?? "x"}-${idx}`} className="rounded-2xl border border-white/10 bg-black/20 p-4">
                 <div className="text-sm font-medium">{t?.title ?? (isEn ? "Tournament not found" : "Турнир не найден")}</div>
                 <div className="mt-1 text-xs text-white/60">
-                  {t?.start_at ? toDate(t.start_at, locale) : isEn ? "Date not set" : "Дата не указана"} • {isEn ? "Status" : "Статус"}: {t?.status ?? "-"}
+                  {t?.start_at ? toDate(t.start_at, locale) : isEn ? "Date not set" : "Дата не указана"} / {isEn ? "Status" : "Статус"}: {t?.status ?? "-"}
                 </div>
                 <div className="mt-1 text-xs text-white/60">{isEn ? "Registered" : "Регистрация"}: {toDate(r.created_at, locale)}</div>
                 {t?.id && (
                   <div className="mt-2 flex flex-wrap gap-2">
                     <Link href={`/tournaments/${t.id}`} className="inline-block text-xs text-cyan-300 hover:text-cyan-200">
-                      {isEn ? "Open tournament" : "Открыть турнир"} →
+                      {isEn ? "Open tournament" : "Открыть турнир"} {"->"}
                     </Link>
                     {t.status !== "finished" && (
                       <form action={`/tournaments/${t.id}/unregister`} method="post">

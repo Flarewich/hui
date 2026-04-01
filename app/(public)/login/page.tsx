@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { logAuditEvent } from "@/lib/audit";
 import { getRequestLocale } from "@/lib/i18nServer";
 import {
   authenticateWithPassword,
@@ -9,6 +10,7 @@ import {
   getProfileByUserId,
   registerWithPassword,
 } from "@/lib/sessionAuth";
+import { resetUserSupportSession } from "@/lib/support";
 import {
   assertSameOriginServerAction,
   consumeRateLimit,
@@ -85,7 +87,11 @@ export default async function LoginPage({
         windowSeconds: 10 * 60,
       });
       if (!ipRate.allowed) {
-        redirect(`/login?tab=signin&error=${encodeURIComponent(isEn ? "Too many sign in attempts. Try again later." : "Слишком много попыток входа. Попробуйте позже.")}`);
+        redirect(
+          `/login?tab=signin&error=${encodeURIComponent(
+            isEn ? "Too many sign in attempts. Try again later." : "Слишком много попыток входа. Попробуйте позже."
+          )}`
+        );
       }
 
       const emailRate = await consumeRateLimit({
@@ -95,7 +101,11 @@ export default async function LoginPage({
         windowSeconds: 10 * 60,
       });
       if (!emailRate.allowed) {
-        redirect(`/login?tab=signin&error=${encodeURIComponent(isEn ? "Too many sign in attempts. Try again later." : "Слишком много попыток входа. Попробуйте позже.")}`);
+        redirect(
+          `/login?tab=signin&error=${encodeURIComponent(
+            isEn ? "Too many sign in attempts. Try again later." : "Слишком много попыток входа. Попробуйте позже."
+          )}`
+        );
       }
 
       const account = await authenticateWithPassword(email, password);
@@ -119,7 +129,14 @@ export default async function LoginPage({
         }
       }
 
+      await resetUserSupportSession(account.userId);
       await createSessionForUser(account.userId);
+      await logAuditEvent({
+        userId: account.userId,
+        action: "auth.sign_in",
+        ipAddress: ip,
+        metadata: { email },
+      });
       redirect("/");
     } catch (e) {
       if (isRedirectException(e)) throw e;
@@ -156,10 +173,20 @@ export default async function LoginPage({
         windowSeconds: 30 * 60,
       });
       if (!signUpRate.allowed) {
-        redirect(`/login?tab=signup&error=${encodeURIComponent(isEn ? "Too many registration attempts. Try again later." : "Слишком много попыток регистрации. Попробуйте позже.")}`);
+        redirect(
+          `/login?tab=signup&error=${encodeURIComponent(
+            isEn ? "Too many registration attempts. Try again later." : "Слишком много попыток регистрации. Попробуйте позже."
+          )}`
+        );
       }
 
-      await registerWithPassword({ email, password, usernameInput });
+      const account = await registerWithPassword({ email, password, usernameInput });
+      await logAuditEvent({
+        userId: account.userId,
+        action: "auth.sign_up",
+        ipAddress: ip,
+        metadata: { email, username: usernameInput || null },
+      });
       redirect(
         `/login?tab=signin&ok=${encodeURIComponent(
           isEn ? "Registration successful. Now sign in." : "Регистрация прошла успешно. Теперь войдите в аккаунт."
@@ -176,7 +203,6 @@ export default async function LoginPage({
     <div className="mx-auto max-w-md">
       <div className="card p-6">
         <h1 className="text-2xl font-bold title-glow">{isEn ? "Account" : "Аккаунт"}</h1>
-        <p className="mt-2 text-sm muted">{isEn ? "Sign in or create a new account." : "Войдите или создайте новый аккаунт."}</p>
 
         <div className="mt-5 grid grid-cols-2 gap-2 rounded-xl border border-white/10 bg-black/25 p-1">
           <Link
@@ -219,24 +245,20 @@ export default async function LoginPage({
           </>
         ) : (
           <form action={signUp} className="mt-5 grid gap-3">
-            <input name="username" className="input" placeholder={isEn ? "Nickname (optional)" : "Ник (необязательно)"} />
+            <input name="username" className="input" placeholder={isEn ? "Nickname" : "Ник"} />
             <input name="email" type="email" required className="input" placeholder="you@mail.com" />
             <input
               name="password"
               type="password"
               required
               className="input"
-              placeholder={isEn ? "Password (min 6 chars)" : "Пароль (минимум 6 символов)"}
+              placeholder={isEn ? "Password" : "Пароль"}
             />
             <button type="submit" className="btn-primary mt-1 w-full">
               {isEn ? "Create account" : "Создать аккаунт"}
             </button>
           </form>
         )}
-
-        <div className="pt-4 text-center text-xs text-white/60">
-          {isEn ? "After sign in, you can manage your profile, teams and tournament activity." : "После входа вы сможете управлять профилем, командами и участием в турнирах."}
-        </div>
       </div>
     </div>
   );

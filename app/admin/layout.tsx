@@ -1,11 +1,13 @@
-﻿import Link from "next/link";
+import Link from "next/link";
+import { countUnreadAdminChat } from "@/lib/adminChat";
 import { requireAdmin } from "@/lib/auth";
 import { getRequestLocale } from "@/lib/i18nServer";
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
-  await requireAdmin();
+  const { user } = await requireAdmin();
   const locale = await getRequestLocale();
   const isEn = locale === "en";
+  const unreadAdminChat = await countUnreadAdminChat(user.id);
 
   return (
     <div className="space-y-6">
@@ -22,6 +24,19 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           </Link>
           <Link href="/admin/support" className="rounded-xl border border-white/10 bg-black/20 px-3 py-1.5 hover:bg-white/5">
             {isEn ? "Support" : "Поддержка"}
+          </Link>
+          <Link href="/admin/chat" className="rounded-xl border border-white/10 bg-black/20 px-3 py-1.5 hover:bg-white/5">
+            <span className="inline-flex items-center gap-2">
+              <span>{isEn ? "Admin chat" : "Чат админов"}</span>
+              {unreadAdminChat > 0 && (
+                <span className="rounded-full bg-cyan-300 px-1.5 py-0.5 text-[10px] font-bold text-black">
+                  {unreadAdminChat > 99 ? "99+" : unreadAdminChat}
+                </span>
+              )}
+            </span>
+          </Link>
+          <Link href="/admin/logs" className="rounded-xl border border-white/10 bg-black/20 px-3 py-1.5 hover:bg-white/5">
+            {isEn ? "Logs" : "Логи"}
           </Link>
           <Link href="/admin/users" className="rounded-xl border border-white/10 bg-black/20 px-3 py-1.5 hover:bg-white/5">
             {isEn ? "Users" : "Пользователи"}

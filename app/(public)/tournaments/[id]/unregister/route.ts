@@ -1,19 +1,18 @@
 import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
+import { logAuditEvent } from "@/lib/audit";
 import { localeCookieName, resolveLocale } from "@/lib/i18n";
 import { createNotification } from "@/lib/notifications";
 import { pgMaybeOne, withPgTransaction } from "@/lib/postgres";
-import { assertSameOriginRequest } from "@/lib/security";
+import { assertSameOriginRequest, getSafeRequestUrl } from "@/lib/security";
 import { getCurrentSession } from "@/lib/sessionAuth";
 
 function redirectToTournament(request: Request, id: string, query: string) {
-  const url = new URL(request.url);
-  return NextResponse.redirect(`${url.origin}/tournaments/${id}?${query}`, { status: 303 });
+  return NextResponse.redirect(getSafeRequestUrl(request, `/tournaments/${id}?${query}`), { status: 303 });
 }
 
 function redirectToProfile(request: Request, query: string) {
-  const url = new URL(request.url);
-  return NextResponse.redirect(`${url.origin}/profile?${query}`, { status: 303 });
+  return NextResponse.redirect(getSafeRequestUrl(request, `/profile?${query}`), { status: 303 });
 }
 
 function getLocaleFromRequest(request: Request) {
@@ -38,8 +37,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const user = session?.user;
 
   if (!user) {
-    const url = new URL(request.url);
-    return NextResponse.redirect(`${url.origin}/login`, { status: 303 });
+    return NextResponse.redirect(getSafeRequestUrl(request, "/login"), { status: 303 });
   }
 
   const formData = await request.formData();
@@ -114,9 +112,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     });
   } catch {
     const errorMsg = encodeURIComponent(isEn ? "Failed to cancel registration" : "Не удалось отменить регистрацию");
-    return toProfile
-      ? redirectToProfile(request, `error=${errorMsg}`)
-      : redirectToTournament(request, id, `error=${errorMsg}`);
+    return toProfile ? redirectToProfile(request, `error=${errorMsg}`) : redirectToTournament(request, id, `error=${errorMsg}`);
   }
 
   revalidatePath(`/tournaments/${id}`);
@@ -142,6 +138,18 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     href: toProfile ? "/profile" : `/tournaments/${id}`,
   });
 
+  await logAuditEvent({
+    userId: user.id,
+    action: "tournament.unregistered",
+    ipAddress: request.headers.get("x-forwarded-for") ?? request.headers.get("x-real-ip") ?? null,
+    metadata: {
+      tournamentId: id,
+      fromProfile: toProfile,
+      leftTeam: shouldLeaveTeam,
+      deletedSoloTeam: shouldDeleteSoloCaptainTeam,
+    },
+  });
+
   const okMsg = encodeURIComponent(
     shouldDeleteSoloCaptainTeam
       ? isEn
@@ -156,7 +164,5 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           : "Регистрация отменена"
   );
 
-  return toProfile
-    ? redirectToProfile(request, `ok=${okMsg}`)
-    : redirectToTournament(request, id, `ok=${okMsg}`);
+  return toProfile ? redirectToProfile(request, `ok=${okMsg}`) : redirectToTournament(request, id, `ok=${okMsg}`);
 }

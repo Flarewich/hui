@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
+import { logAuditEvent } from "@/lib/audit";
 import { localeCookieName, resolveLocale } from "@/lib/i18n";
 import { createNotification } from "@/lib/notifications";
 import { pgMaybeOne, pgOne, pgRows, withPgTransaction } from "@/lib/postgres";
-import { assertSameOriginRequest } from "@/lib/security";
+import { assertSameOriginRequest, getSafeRequestUrl } from "@/lib/security";
 import { getCurrentSession } from "@/lib/sessionAuth";
 import { getTeamSizeLimit } from "@/lib/tournamentLimits";
 
@@ -18,23 +19,20 @@ function msg(request: Request, en: string, ru: string) {
 }
 
 function redirectToProfile(request: Request, query: string) {
-  const url = new URL(request.url);
-  return NextResponse.redirect(`${url.origin}/profile?${query}`, { status: 303 });
+  return NextResponse.redirect(getSafeRequestUrl(request, `/profile?${query}`), { status: 303 });
 }
 
 export async function POST(request: Request) {
   try {
     assertSameOriginRequest(request);
   } catch {
-    const url = new URL(request.url);
-    return NextResponse.redirect(`${url.origin}/profile?error=${encodeURIComponent("Forbidden")}`, { status: 303 });
+    return NextResponse.redirect(getSafeRequestUrl(request, `/profile?error=${encodeURIComponent("Forbidden")}`), { status: 303 });
   }
 
   const session = await getCurrentSession();
   const user = session?.user;
   if (!user) {
-    const url = new URL(request.url);
-    return NextResponse.redirect(`${url.origin}/login`, { status: 303 });
+    return NextResponse.redirect(getSafeRequestUrl(request, "/login"), { status: 303 });
   }
 
   const formData = await request.formData();
@@ -199,14 +197,6 @@ export async function POST(request: Request) {
     revalidatePath(`/tournaments/${targetTeamRegistration.tournament_id}/room`);
   }
 
-  await createNotification({
-    userId: user.id,
-    type: "team_joined",
-    title: "You joined a team",
-    body: team.name ? `Team: ${team.name}` : null,
-    href: "/profile#teams",
-  });
-
   if (team.captain_id && team.captain_id !== user.id) {
     await createNotification({
       userId: team.captain_id,
@@ -216,6 +206,18 @@ export async function POST(request: Request) {
       href: "/profile#teams",
     });
   }
+
+  await logAuditEvent({
+    userId: user.id,
+    action: "team.joined",
+    ipAddress: request.headers.get("x-forwarded-for") ?? request.headers.get("x-real-ip") ?? null,
+    metadata: {
+      teamId,
+      teamName: team.name,
+      captainId: team.captain_id,
+      tournamentId: targetTeamRegistration?.tournament_id ?? null,
+    },
+  });
 
   return redirectToProfile(request, `ok=${encodeURIComponent(msg(request, "You joined the team", "Вы присоединились к команде"))}`);
 }

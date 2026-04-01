@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { clearCurrentSession } from "@/lib/sessionAuth";
-import { assertSameOriginRequest } from "@/lib/security";
+import { assertSameOriginRequest, getSafeRequestUrl } from "@/lib/security";
 
 export async function POST(request: Request) {
   try {
@@ -10,6 +10,5 @@ export async function POST(request: Request) {
   }
 
   await clearCurrentSession();
-  const url = new URL(request.url);
-  return NextResponse.redirect(`${url.origin}/`, { status: 303 });
+  return NextResponse.redirect(getSafeRequestUrl(request, "/"), { status: 303 });
 }

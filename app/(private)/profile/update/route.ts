@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
+import { logAuditEvent } from "@/lib/audit";
 import { localeCookieName, resolveLocale } from "@/lib/i18n";
 import { savePublicUpload } from "@/lib/localUploads";
 import { ensureProfilePayoutColumns } from "@/lib/profilePayouts";
 import { pgMaybeOne, pgQuery } from "@/lib/postgres";
-import { assertSameOriginRequest, consumeRateLimit, getRequestIp, sanitizeTextInput } from "@/lib/security";
+import { assertSameOriginRequest, consumeRateLimit, getRequestIp, getSafeRequestUrl, sanitizeTextInput } from "@/lib/security";
 import { getCurrentSession } from "@/lib/sessionAuth";
 
 const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
@@ -21,8 +22,7 @@ function msg(request: Request, en: string, ru: string) {
 }
 
 function redirectWith(request: Request, query: string) {
-  const url = new URL(request.url);
-  return NextResponse.redirect(`${url.origin}/profile?${query}`, { status: 303 });
+  return NextResponse.redirect(getSafeRequestUrl(request, `/profile?${query}`), { status: 303 });
 }
 
 async function uploadAvatar(file: File, userId: string) {
@@ -33,16 +33,14 @@ export async function POST(request: Request) {
   try {
     assertSameOriginRequest(request);
   } catch {
-    const url = new URL(request.url);
-    return NextResponse.redirect(`${url.origin}/profile?error=${encodeURIComponent("Forbidden")}`, { status: 303 });
+    return NextResponse.redirect(getSafeRequestUrl(request, `/profile?error=${encodeURIComponent("Forbidden")}`), { status: 303 });
   }
 
   const session = await getCurrentSession();
   const user = session?.user;
 
   if (!user) {
-    const url = new URL(request.url);
-    return NextResponse.redirect(`${url.origin}/login`, { status: 303 });
+    return NextResponse.redirect(getSafeRequestUrl(request, "/login"), { status: 303 });
   }
 
   await ensureProfilePayoutColumns();
@@ -140,5 +138,16 @@ export async function POST(request: Request) {
   revalidatePath("/profile");
   revalidatePath("/admin/users");
   revalidatePath("/admin/payments");
+  await logAuditEvent({
+    userId: user.id,
+    action: "profile.updated",
+    ipAddress: ip,
+    metadata: {
+      username,
+      payoutIbanSet: Boolean(payoutIban),
+      avatarUpdated: avatarFile instanceof File && avatarFile.size > 0,
+      avatarRemoved: removeAvatar,
+    },
+  });
   return redirectWith(request, `ok=${encodeURIComponent(msg(request, "Profile updated", "Профиль обновлен"))}`);
 }
