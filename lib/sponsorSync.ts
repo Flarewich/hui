@@ -1,4 +1,4 @@
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { pgMaybeOne, pgQuery } from "@/lib/postgres";
 
 function buildSponsorName(userId: string, username?: string | null) {
   const trimmed = (username ?? "").trim();
@@ -14,25 +14,35 @@ export async function ensureSponsorRecordForProfile(params: {
   const fallbackName = buildSponsorName(userId, username);
 
   // Try to find an existing sponsor row by exact name first to avoid duplicates.
-  const { data: existingByName } = await supabaseAdmin
-    .from("sponsors")
-    .select("id, is_active")
-    .eq("name", fallbackName)
-    .limit(1)
-    .maybeSingle<{ id: string; is_active: boolean | null }>();
+  const existingByName = await pgMaybeOne<{ id: string; is_active: boolean | null }>(
+    `
+      select id, is_active
+      from sponsors
+      where name = $1
+      limit 1
+    `,
+    [fallbackName]
+  );
 
   if (existingByName?.id) {
     if (!existingByName.is_active) {
-      await supabaseAdmin.from("sponsors").update({ is_active: true }).eq("id", existingByName.id);
+      await pgQuery(
+        `
+          update sponsors
+          set is_active = true
+          where id = $1
+        `,
+        [existingByName.id]
+      );
     }
     return;
   }
 
-  await supabaseAdmin.from("sponsors").insert({
-    name: fallbackName,
-    tier: "partner",
-    href: null,
-    logo_url: null,
-    is_active: true,
-  });
+  await pgQuery(
+    `
+      insert into sponsors (name, tier, href, logo_url, is_active)
+      values ($1, 'partner', null, null, true)
+    `,
+    [fallbackName]
+  );
 }

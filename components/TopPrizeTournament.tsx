@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { formatEuro } from "@/lib/currency";
+import type { Locale } from "@/lib/i18n";
 
 type TopPrizeTournamentProps = {
   id: string;
@@ -42,7 +44,8 @@ export default function TopPrizeTournament(props: TopPrizeTournamentProps) {
   const left = startTs - now;
   const hydrated = now > 0;
   const isStarted = hydrated && left <= 0;
-  const prizeText = `${props.prizePool.toLocaleString(props.locale)} RUB`;
+  const currencyLocale: Locale = isEn ? "en" : "ru";
+  const prizeText = formatEuro(props.prizePool, currencyLocale);
   const prizeLen = Math.max(prizeText.length - 1, 1);
 
   return (

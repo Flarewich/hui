@@ -1,7 +1,9 @@
 import Link from "next/link";
 import PageShell from "@/components/PageShell";
-import { createSupabaseServerClient } from "@/lib/supabaseServer";
+import SponsorRequestModal from "@/components/SponsorRequestModal";
 import { getRequestLocale } from "@/lib/i18nServer";
+import { pgRows } from "@/lib/postgres";
+import { getCurrentSession } from "@/lib/sessionAuth";
 
 type Sponsor = {
   id: string;
@@ -34,17 +36,15 @@ function countByTier(items: Sponsor[]) {
 export default async function SponsorsPage() {
   const locale = await getRequestLocale();
   const isEn = locale === "en";
-  const supabase = await createSupabaseServerClient();
-
-  const { data, error } = await supabase
-    .from("sponsors")
-    .select("id, name, href, tier, logo_url")
-    .eq("is_active", true)
-    .order("tier", { ascending: true })
-    .order("name", { ascending: true })
-    .returns<Sponsor[]>();
-
-  const sponsors = data ?? [];
+  const session = await getCurrentSession();
+  const sponsors = await pgRows<Sponsor>(
+    `
+      select id, name, href, tier, logo_url
+      from sponsors
+      where is_active = true
+      order by tier asc, name asc
+    `
+  );
   const stats = countByTier(sponsors);
 
   return (
@@ -53,7 +53,7 @@ export default async function SponsorsPage() {
       subtitle={
         isEn
           ? "Partners who help grow WinStrike tournaments and prize pools."
-          : "Партнёры, которые помогают развивать турниры WinStrike и усиливают призовые фонды."
+          : "Партнеры, которые помогают развивать турниры WinStrike и усиливают призовые фонды."
       }
     >
       <div className="sponsors-restore space-y-6">
@@ -65,12 +65,12 @@ export default async function SponsorsPage() {
             <div className="max-w-3xl">
               <div className="s-pill inline-flex px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-cyan-100">Sponsor Network</div>
               <h2 className="mt-3 text-xl font-extrabold sm:text-2xl md:text-3xl">
-                {isEn ? "WinStrike Partner Ecosystem" : "Экосистема партнёров WinStrike"}
+                {isEn ? "WinStrike Partner Ecosystem" : "Экосистема партнеров WinStrike"}
               </h2>
               <p className="mt-2 text-sm text-white/75">
                 {isEn
                   ? "Brands, streaming platforms, and gaming services that support tournaments and community."
-                  : "Бренды, стрим-платформы и игровые сервисы, которые поддерживают киберспортивные турниры и комьюнити."}
+                  : "Бренды, стрим-платформы и игровые сервисы, которые поддерживают турниры и сообщество."}
               </p>
             </div>
 
@@ -94,12 +94,6 @@ export default async function SponsorsPage() {
             </div>
           </div>
         </section>
-
-        {error && (
-          <div className="s-card border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">
-            {isEn ? "Failed to load sponsors" : "Ошибка загрузки спонсоров"}: {error.message}
-          </div>
-        )}
 
         <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {sponsors.map((sponsor) => {
@@ -130,7 +124,13 @@ export default async function SponsorsPage() {
                   <div className="min-w-0">
                     <div className="truncate text-lg font-bold">{sponsor.name}</div>
                     <div className="mt-1 text-xs text-white/55">
-                      {isEn ? (isLink ? "Official tournament partner" : "Partner profile without external link") : isLink ? "Официальный партнёр турниров" : "Профиль партнёра без внешней ссылки"}
+                      {isEn
+                        ? isLink
+                          ? "Official tournament partner"
+                          : "Partner profile without external link"
+                        : isLink
+                          ? "Официальный партнер турниров"
+                          : "Профиль партнера без внешней ссылки"}
                     </div>
                   </div>
                 </div>
@@ -138,7 +138,7 @@ export default async function SponsorsPage() {
             );
           })}
 
-          {sponsors.length === 0 && !error && (
+          {sponsors.length === 0 && (
             <div className="s-card p-6 text-sm text-white/60">{isEn ? "No active sponsors yet." : "Пока нет активных спонсоров."}</div>
           )}
         </section>
@@ -148,7 +148,7 @@ export default async function SponsorsPage() {
           <p className="mt-2 max-w-3xl text-sm text-white/75">
             {isEn
               ? "Tell us about your brand and collaboration format. We support prize, media and seasonal partnerships."
-              : "Расскажите о вашем бренде и формате сотрудничества. Мы открыты к партнёрствам по призовым фондам, медийным интеграциям, спонсорству турнирных сезонов и совместным активностям."}
+              : "Расскажите о вашем бренде и формате сотрудничества. Мы открыты к партнерствам по призовым фондам, медийным интеграциям, спонсорству турнирных сезонов и совместным активностям."}
           </p>
 
           <div className="mt-4 grid gap-3 md:grid-cols-3">
@@ -163,7 +163,7 @@ export default async function SponsorsPage() {
               <div className="text-xs text-white/60">{isEn ? "Step 2" : "Шаг 2"}</div>
               <div className="mt-1 text-sm font-semibold">{isEn ? "Align package" : "Согласуем пакет"}</div>
               <div className="mt-1 text-xs text-white/60">
-                {isEn ? "Define partnership tier, audience and integrations." : "Подберём уровень партнёрства, охват и ключевые точки интеграции."}
+                {isEn ? "Define partnership tier, audience and integrations." : "Подберем уровень партнерства, охват и ключевые точки интеграции."}
               </div>
             </div>
             <div className="s-card p-4">
@@ -186,9 +186,12 @@ export default async function SponsorsPage() {
           </div>
 
           <div className="mt-5 flex flex-wrap gap-3">
-            <a href={`mailto:support@tournaments?subject=${encodeURIComponent(isEn ? "Partnership with WinStrike" : "Партнерство с WinStrike")}`} className="rounded-xl bg-white px-5 py-2.5 text-sm font-semibold text-black hover:bg-white/90">
-              {isEn ? "Become sponsor" : "Стать спонсором"}
-            </a>
+            <SponsorRequestModal
+              locale={locale}
+              isAuthenticated={Boolean(session?.user)}
+              defaultEmail={session?.user?.email ?? null}
+              defaultName={session?.profile?.username ?? null}
+            />
             <Link href="/support" className="rounded-xl border border-white/15 bg-black/25 px-5 py-2.5 text-sm font-semibold text-white/85 hover:bg-white/5">
               {isEn ? "Contact support" : "Написать в поддержку"}
             </Link>

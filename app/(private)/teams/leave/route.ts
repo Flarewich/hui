@@ -1,8 +1,9 @@
-﻿import { NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
-import { createSupabaseRouteClient } from "@/lib/supabaseRoute";
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { localeCookieName, resolveLocale } from "@/lib/i18n";
+import { pgMaybeOne, withPgTransaction } from "@/lib/postgres";
+import { assertSameOriginRequest } from "@/lib/security";
+import { getCurrentSession } from "@/lib/sessionAuth";
 
 function getLocale(request: Request) {
   const raw = request.headers.get("cookie") ?? "";
@@ -20,10 +21,15 @@ function redirectToProfile(request: Request, query: string) {
 }
 
 export async function POST(request: Request) {
-  const supabase = await createSupabaseRouteClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  try {
+    assertSameOriginRequest(request);
+  } catch {
+    const url = new URL(request.url);
+    return NextResponse.redirect(`${url.origin}/profile?error=${encodeURIComponent("Forbidden")}`, { status: 303 });
+  }
+
+  const session = await getCurrentSession();
+  const user = session?.user;
 
   if (!user) {
     const url = new URL(request.url);
@@ -37,7 +43,15 @@ export async function POST(request: Request) {
     return redirectToProfile(request, `error=${encodeURIComponent(msg(request, "Team ID is missing", "Не передан ID команды"))}`);
   }
 
-  const { data: team } = await supabaseAdmin.from("teams").select("id, captain_id").eq("id", teamId).maybeSingle();
+  const team = await pgMaybeOne<{ id: string; captain_id: string }>(
+    `
+      select id, captain_id
+      from teams
+      where id = $1
+      limit 1
+    `,
+    [teamId]
+  );
 
   if (!team) {
     return redirectToProfile(request, `error=${encodeURIComponent(msg(request, "Team not found", "Команда не найдена"))}`);
@@ -47,9 +61,40 @@ export async function POST(request: Request) {
     return redirectToProfile(request, `error=${encodeURIComponent(msg(request, "Captain cannot leave the team. Delete team instead", "Капитан не может выйти из команды. Удалите команду"))}`);
   }
 
-  const { error: delError } = await supabaseAdmin.from("team_members").delete().eq("team_id", teamId).eq("user_id", user.id);
+  try {
+    const registration = await pgMaybeOne<{ tournament_id: string | null }>(
+      `
+        select tournament_id
+        from registrations
+        where team_id = $1 and user_id = $2
+        limit 1
+      `,
+      [teamId, user.id]
+    );
 
-  if (delError) {
+    await withPgTransaction(async (client) => {
+      await client.query(
+        `
+          delete from registrations
+          where team_id = $1 and user_id = $2
+        `,
+        [teamId, user.id]
+      );
+
+      await client.query(
+        `
+          delete from team_members
+          where team_id = $1 and user_id = $2
+        `,
+        [teamId, user.id]
+      );
+    });
+
+    if (registration?.tournament_id) {
+      revalidatePath(`/tournaments/${registration.tournament_id}`);
+      revalidatePath(`/tournaments/${registration.tournament_id}/room`);
+    }
+  } catch {
     return redirectToProfile(request, `error=${encodeURIComponent(msg(request, "Failed to leave team", "Не удалось выйти из команды"))}`);
   }
 

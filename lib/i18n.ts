@@ -25,6 +25,7 @@ type Messages = {
   };
   avatarMenu: {
     profile: string;
+    notifications: string;
     support: string;
     adminMenu: string;
     dashboard: string;
@@ -34,6 +35,7 @@ type Messages = {
     supportChat: string;
     usersAndRoles: string;
     sponsors: string;
+    emails: string;
     logout: string;
   };
   home: {
@@ -91,6 +93,7 @@ const ru: Messages = {
   },
   avatarMenu: {
     profile: "Профиль",
+    notifications: "Уведомления",
     support: "Поддержка",
     adminMenu: "Админ-меню",
     dashboard: "Дашборд",
@@ -100,6 +103,7 @@ const ru: Messages = {
     supportChat: "Чат поддержки",
     usersAndRoles: "Пользователи и роли",
     sponsors: "Спонсоры",
+    emails: "Письма",
     logout: "Выйти",
   },
   home: {
@@ -126,7 +130,7 @@ const ru: Messages = {
     infoTitle: "Описание турниров",
     infoSubtitle: "Как работают турниры на платформе.",
     scheduleTableTitle: "Таблица расписания",
-    scheduleTableHint: "Матчи и время начала из Supabase.",
+    scheduleTableHint: "Матчи и время начала из базы данных.",
     scheduleColStart: "Старт",
     scheduleColTournament: "Турнир",
     scheduleColStage: "Стадия",
@@ -157,6 +161,7 @@ const en: Messages = {
   },
   avatarMenu: {
     profile: "Profile",
+    notifications: "Notifications",
     support: "Support",
     adminMenu: "Admin menu",
     dashboard: "Dashboard",
@@ -166,6 +171,7 @@ const en: Messages = {
     supportChat: "Support chat",
     usersAndRoles: "Users and roles",
     sponsors: "Sponsors",
+    emails: "Emails",
     logout: "Log out",
   },
   home: {
@@ -192,7 +198,7 @@ const en: Messages = {
     infoTitle: "Tournament overview",
     infoSubtitle: "How tournaments work on the platform.",
     scheduleTableTitle: "Schedule table",
-    scheduleTableHint: "Match rows and start times from Supabase.",
+    scheduleTableHint: "Match rows and start times from the database.",
     scheduleColStart: "Start",
     scheduleColTournament: "Tournament",
     scheduleColStage: "Stage",

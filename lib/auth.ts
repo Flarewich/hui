@@ -1,17 +1,8 @@
-﻿import { redirect } from "next/navigation";
+import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
-import { createSupabaseServerClient } from "@/lib/supabaseServer";
 import { resolveLocale } from "@/lib/i18n";
-
-type Profile = {
-  id: string;
-  username: string | null;
-  avatar_url: string | null;
-  role: string | null;
-  is_banned?: boolean | null;
-  banned_until?: string | null;
-  restricted_until?: string | null;
-};
+import { assertSameOriginServerActionIfPresent } from "@/lib/security";
+import { getCurrentSession } from "@/lib/sessionAuth";
 
 function formatUntil(raw: string | null | undefined, locale: "ru" | "en") {
   if (!raw) return null;
@@ -37,19 +28,11 @@ function restrictionMessage(locale: "ru" | "en", until: string | null) {
 }
 
 export async function requireUser() {
-  const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  await assertSameOriginServerActionIfPresent();
+  const session = await getCurrentSession();
+  if (!session?.user) redirect("/login");
 
-  if (!user) redirect("/login");
-
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("id, username, avatar_url, role, is_banned, banned_until, restricted_until")
-    .eq("id", user.id)
-    .single<Profile>();
-
+  const { user, profile } = session;
   const now = Date.now();
   const isBanned =
     Boolean(profile?.is_banned) ||
@@ -64,16 +47,11 @@ export async function requireUser() {
     redirect(`/login?error=${encodeURIComponent(message)}`);
   }
 
-  return { supabase, user, profile: profile ?? null };
+  return { user, profile: profile ?? null };
 }
 
 export async function requireAdmin() {
-  const { supabase, user, profile } = await requireUser();
-  const metadataRole =
-    user.app_metadata && typeof user.app_metadata === "object" && user.app_metadata.role === "admin"
-      ? "admin"
-      : null;
-
-  if (profile?.role !== "admin" && metadataRole !== "admin") redirect("/");
-  return { supabase, user, profile };
+  const { user, profile } = await requireUser();
+  if (profile?.role !== "admin" && user.app_metadata.role !== "admin") redirect("/");
+  return { user, profile };
 }

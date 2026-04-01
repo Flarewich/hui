@@ -1,4 +1,4 @@
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { pgRows } from "@/lib/postgres";
 
 export type PublicRegistrationRow = {
   id: string;
@@ -34,42 +34,79 @@ type TeamMember = {
 };
 
 export async function getTournamentRegistrationRows(tournamentId: string): Promise<PublicRegistrationRow[]> {
-  const { data: regs } = await supabaseAdmin
-    .from("registrations")
-    .select("id, created_at, user_id, team_id")
-    .eq("tournament_id", tournamentId)
-    .order("created_at", { ascending: true })
-    .returns<Registration[]>();
+  const regRows = await pgRows<Registration>(
+    `
+      select id, created_at, user_id, team_id
+      from (
+        select distinct on (coalesce(team_id, user_id))
+          id,
+          created_at,
+          user_id,
+          team_id
+        from registrations
+        where tournament_id = $1
+        order by coalesce(team_id, user_id), created_at asc
+      ) deduped
+      order by created_at asc
+    `,
+    [tournamentId]
+  );
 
-  const regRows = regs ?? [];
   if (regRows.length === 0) return [];
 
   const userIds = [...new Set(regRows.map((r) => r.user_id))];
   const teamIds = [...new Set(regRows.map((r) => r.team_id).filter(Boolean))] as string[];
 
-  const [profilesResult, teamsResult, teamMembersResult] = await Promise.all([
+  const [profiles, teams, teamMembers] = await Promise.all([
     userIds.length
-      ? supabaseAdmin.from("profiles").select("id, username").in("id", userIds).returns<Profile[]>()
-      : Promise.resolve({ data: [] as Profile[] }),
+      ? pgRows<Profile>(
+          `
+            select id, username
+            from profiles
+            where id = any($1::uuid[])
+          `,
+          [userIds]
+        )
+      : Promise.resolve([] as Profile[]),
     teamIds.length
-      ? supabaseAdmin.from("teams").select("id, name").in("id", teamIds).returns<Team[]>()
-      : Promise.resolve({ data: [] as Team[] }),
+      ? pgRows<Team>(
+          `
+            select id, name
+            from teams
+            where id = any($1::uuid[])
+          `,
+          [teamIds]
+        )
+      : Promise.resolve([] as Team[]),
     teamIds.length
-      ? supabaseAdmin.from("team_members").select("team_id, user_id").in("team_id", teamIds).returns<TeamMember[]>()
-      : Promise.resolve({ data: [] as TeamMember[] }),
+      ? pgRows<TeamMember>(
+          `
+            select team_id, user_id
+            from team_members
+            where team_id = any($1::uuid[])
+          `,
+          [teamIds]
+        )
+      : Promise.resolve([] as TeamMember[]),
   ]);
 
-  const teamMembers = teamMembersResult.data ?? [];
   const teamMemberUserIds = [...new Set(teamMembers.map((m) => m.user_id))];
   const extraProfileIds = teamMemberUserIds.filter((id) => !userIds.includes(id));
-  const extraProfilesResult = extraProfileIds.length
-    ? await supabaseAdmin.from("profiles").select("id, username").in("id", extraProfileIds).returns<Profile[]>()
-    : { data: [] as Profile[] };
+  const extraProfiles = extraProfileIds.length
+    ? await pgRows<Profile>(
+        `
+          select id, username
+          from profiles
+          where id = any($1::uuid[])
+        `,
+        [extraProfileIds]
+      )
+    : [];
 
   const profileMap = new Map(
-    [...(profilesResult.data ?? []), ...(extraProfilesResult.data ?? [])].map((p) => [p.id, p.username ?? "User"])
+    [...profiles, ...extraProfiles].map((p) => [p.id, p.username ?? "User"])
   );
-  const teamMap = new Map((teamsResult.data ?? []).map((t) => [t.id, t.name]));
+  const teamMap = new Map(teams.map((t) => [t.id, t.name]));
   const teamMembersByTeam = new Map<string, string[]>();
 
   for (const member of teamMembers) {

@@ -1,4 +1,4 @@
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { pgQuery, pgRows } from "@/lib/postgres";
 
 type GameSeed = {
   slug: string;
@@ -46,36 +46,51 @@ function canonicalSlug(slug: string | null | undefined, name: string | null | un
 
 export async function ensureDefaultGames() {
   const slugs = DEFAULT_GAMES.map((g) => g.slug);
-  const { data: existing, error } = await supabaseAdmin
-    .from("games")
-    .select("id, slug")
-    .in("slug", slugs)
-    .returns<Array<{ id: string; slug: string }>>();
+  const existing = await pgRows<{ id: string; slug: string }>(
+    `
+      select id, slug
+      from games
+      where slug = any($1::text[])
+    `,
+    [slugs]
+  );
 
-  if (error) return;
-
-  const existingSlugs = new Set((existing ?? []).map((g) => g.slug));
+  const existingSlugs = new Set(existing.map((g) => g.slug));
   const missing = DEFAULT_GAMES.filter((g) => !existingSlugs.has(g.slug));
 
   if (missing.length > 0) {
-    await supabaseAdmin.from("games").insert(missing.map((g) => ({ ...g, is_active: true })));
+    for (const game of missing) {
+      await pgQuery(
+        `
+          insert into games (slug, name, icon_url, is_active)
+          values ($1, $2, $3, true)
+        `,
+        [game.slug, game.name, game.icon_url]
+      );
+    }
   }
 
   // Keep names/icons in sync with local assets.
   for (const game of DEFAULT_GAMES) {
-    await supabaseAdmin
-      .from("games")
-      .update({ name: game.name, icon_url: game.icon_url, is_active: true })
-      .eq("slug", game.slug);
+    await pgQuery(
+      `
+        update games
+        set name = $2, icon_url = $3, is_active = true
+        where slug = $1
+      `,
+      [game.slug, game.name, game.icon_url]
+    );
   }
 
   // Deactivate duplicate aliases (e.g. dota2/dota-2, standoff2/standoff-2).
-  const { data: allGames } = await supabaseAdmin
-    .from("games")
-    .select("id, slug, name, is_active")
-    .returns<DbGame[]>();
+  const allGames = await pgRows<DbGame>(
+    `
+      select id, slug, name, is_active
+      from games
+    `
+  );
 
-  if (!allGames || allGames.length === 0) return;
+  if (allGames.length === 0) return;
 
   const byCanonical = new Map<string, DbGame[]>();
   for (const game of allGames) {
@@ -90,18 +105,25 @@ export async function ensureDefaultGames() {
     const preferred = list.find((g) => norm(g.slug) === key) ?? list[0];
     const preferredMeta = DEFAULT_GAMES.find((g) => g.slug === key);
 
-    await supabaseAdmin
-      .from("games")
-      .update({
-        name: preferredMeta?.name ?? preferred.name ?? key,
-        icon_url: preferredMeta?.icon_url ?? null,
-        is_active: true,
-      })
-      .eq("id", preferred.id);
+    await pgQuery(
+      `
+        update games
+        set name = $2, icon_url = $3, is_active = true
+        where id = $1
+      `,
+      [preferred.id, preferredMeta?.name ?? preferred.name ?? key, preferredMeta?.icon_url ?? null]
+    );
 
     const duplicateIds = list.filter((g) => g.id !== preferred.id).map((g) => g.id);
     if (duplicateIds.length > 0) {
-      await supabaseAdmin.from("games").update({ is_active: false }).in("id", duplicateIds);
+      await pgQuery(
+        `
+          update games
+          set is_active = false
+          where id = any($1::uuid[])
+        `,
+        [duplicateIds]
+      );
     }
   }
 }

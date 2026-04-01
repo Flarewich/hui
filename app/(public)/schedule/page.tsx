@@ -1,8 +1,9 @@
-﻿import Link from "next/link";
-import { createSupabaseServerClient } from "@/lib/supabaseServer";
+import Link from "next/link";
 import { getDateLocale } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/i18nServer";
+import { pgRows } from "@/lib/postgres";
 import { getTournamentCapacity } from "@/lib/tournamentLimits";
+import { formatEuro } from "@/lib/currency";
 import PageShell from "@/components/PageShell";
 
 type ScheduleTournament = {
@@ -63,17 +64,39 @@ function statusClass(status: "upcoming" | "live" | "finished") {
 export default async function SchedulePage() {
   const locale = await getRequestLocale();
   const dateLocale = getDateLocale(locale);
-  const supabase = await createSupabaseServerClient();
 
-  const { data, error } = await supabase
-    .from("tournaments_with_counts")
-    .select("id, title, status, mode, start_at, prize_pool, participants, games(name, slug)")
-    .limit(200)
-    .returns<ScheduleTournament[]>();
+  const data = await pgRows<ScheduleTournament & { max_teams: number | null }>(
+    `
+      select
+        t.id,
+        t.title,
+        t.status,
+        t.mode,
+        t.start_at,
+        t.prize_pool,
+        t.max_teams,
+        coalesce(tc.participants, 0) as participants,
+        json_build_object('name', g.name, 'slug', g.slug) as games
+      from tournaments t
+      left join games g on g.id = t.game_id
+      left join (
+        select tournament_id, count(distinct coalesce(team_id, user_id))::int as participants
+        from registrations
+        group by tournament_id
+      ) tc on tc.tournament_id = t.id
+      order by t.start_at asc
+      limit 200
+    `
+  );
 
-  const rows: EnrichedTournament[] = (data ?? []).map((item) => {
+  const rows: EnrichedTournament[] = data.map((item) => {
     const dynamicStatus = effectiveStatus(item.status, item.start_at);
-    const capacity = getTournamentCapacity(item.mode, item.games?.slug ?? null, item.games?.name ?? null);
+    const capacity = getTournamentCapacity(
+      item.mode,
+      item.games?.slug ?? null,
+      item.games?.name ?? null,
+      item.max_teams
+    );
     const participants = item.participants ?? 0;
     const isRegistrationOpen = dynamicStatus === "upcoming" && participants < capacity;
 
@@ -103,11 +126,7 @@ export default async function SchedulePage() {
 
   return (
     <PageShell title={title} subtitle={subtitle}>
-      {error ? (
-        <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">
-          {isEn ? "Failed to load schedule" : "Не удалось загрузить расписание"}: {error.message}
-        </div>
-      ) : rows.length === 0 ? (
+      {rows.length === 0 ? (
         <div className="card p-6 text-sm text-white/70">{isEn ? "No tournaments yet." : "Турниров пока нет."}</div>
       ) : (
         <div className="card overflow-hidden p-0">
@@ -141,7 +160,7 @@ export default async function SchedulePage() {
                       <span className={`font-semibold uppercase ${statusClass(item.effectiveStatus)}`}>
                         {statusLabel(item.effectiveStatus, locale)}
                       </span>
-                      <span className="font-semibold text-cyan-200">{(item.prize_pool ?? 0).toLocaleString(dateLocale)} RUB</span>
+                      <span className="font-semibold text-cyan-200">{formatEuro(item.prize_pool, locale)}</span>
                     </div>
                   </div>
                 </li>

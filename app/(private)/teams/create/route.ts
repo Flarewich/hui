@@ -1,8 +1,9 @@
-﻿import { NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
-import { createSupabaseRouteClient } from "@/lib/supabaseRoute";
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { localeCookieName, resolveLocale } from "@/lib/i18n";
+import { pgMaybeOne, withPgTransaction } from "@/lib/postgres";
+import { assertSameOriginRequest } from "@/lib/security";
+import { getCurrentSession } from "@/lib/sessionAuth";
 
 function getLocale(request: Request) {
   const raw = request.headers.get("cookie") ?? "";
@@ -20,10 +21,15 @@ function redirectToProfile(request: Request, query: string) {
 }
 
 export async function POST(request: Request) {
-  const supabase = await createSupabaseRouteClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  try {
+    assertSameOriginRequest(request);
+  } catch {
+    const url = new URL(request.url);
+    return NextResponse.redirect(`${url.origin}/profile?error=${encodeURIComponent("Forbidden")}`, { status: 303 });
+  }
+
+  const session = await getCurrentSession();
+  const user = session?.user;
 
   if (!user) {
     const url = new URL(request.url);
@@ -49,23 +55,53 @@ export async function POST(request: Request) {
     return redirectToProfile(request, `error=${encodeURIComponent(msg(request, "Team password must be 4-32 characters", "Пароль команды: от 4 до 32 символов"))}`);
   }
 
-  const { data: team, error: teamError } = await supabaseAdmin
-    .from("teams")
-    .insert({
-      name,
-      mode,
-      captain_id: user.id,
-      join_type: joinType,
-      join_password: joinType === "password" ? joinPassword : null,
-    })
-    .select("id")
-    .single();
+  const duplicateTeam = await pgMaybeOne<{ id: string }>(
+    `
+      select id
+      from teams
+      where lower(btrim(name)) = lower(btrim($1))
+      limit 1
+    `,
+    [name]
+  );
 
-  if (teamError || !team?.id) {
-    return redirectToProfile(request, `error=${encodeURIComponent(teamError?.message || msg(request, "Failed to create team", "Не удалось создать команду"))}`);
+  if (duplicateTeam?.id) {
+    return redirectToProfile(request, `error=${encodeURIComponent(msg(request, "Team name is already taken", "Название команды уже занято"))}`);
   }
 
-  await supabaseAdmin.from("team_members").upsert({ team_id: team.id, user_id: user.id }, { onConflict: "team_id,user_id" });
+  try {
+    await withPgTransaction(async (client) => {
+      const created = await client.query<{ id: string }>(
+        `
+          insert into teams (name, mode, captain_id, join_type, join_password)
+          values ($1, $2, $3, $4, $5)
+          returning id
+        `,
+        [name, mode, user.id, joinType, joinType === "password" ? joinPassword : null]
+      );
+
+      const teamId = created.rows[0]?.id;
+      if (!teamId) {
+        throw new Error("Failed to create team");
+      }
+
+      await client.query(
+        `
+          insert into team_members (team_id, user_id)
+          values ($1, $2)
+          on conflict (team_id, user_id) do nothing
+        `,
+        [teamId, user.id]
+      );
+    });
+  } catch (error) {
+    const messageText = error instanceof Error ? error.message : "";
+    const message =
+      messageText.includes("uq_teams_name_ci") || messageText.toLowerCase().includes("team name")
+        ? msg(request, "Team name is already taken", "Название команды уже занято")
+        : msg(request, "Failed to create team", "Не удалось создать команду");
+    return redirectToProfile(request, `error=${encodeURIComponent(message)}`);
+  }
 
   revalidatePath("/profile");
   revalidatePath("/tournaments");

@@ -123,7 +123,16 @@ export function getTeamSizeLimit(mode: string, gameSlug?: string | null, gameNam
   return getGameTournamentSettings(gameSlug, gameName).team_size;
 }
 
-export function getTournamentCapacity(mode: string, gameSlug?: string | null, gameName?: string | null) {
+export function getTournamentCapacity(
+  mode: string,
+  gameSlug?: string | null,
+  gameName?: string | null,
+  manualMaxTeams?: number | null
+) {
+  if (typeof manualMaxTeams === "number" && Number.isFinite(manualMaxTeams) && manualMaxTeams > 0) {
+    return Math.min(Math.floor(manualMaxTeams), UNIVERSAL_TOURNAMENT_SETTINGS.max_teams);
+  }
+
   if (mode === "solo") return 100;
   const settings = getGameTournamentSettings(gameSlug, gameName);
   const raw =

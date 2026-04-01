@@ -1,8 +1,9 @@
-﻿import Image from "next/image";
+import Image from "next/image";
 import Link from "next/link";
-import { createSupabaseServerClient } from "@/lib/supabaseServer";
+import { pgMaybeOne, pgRows } from "@/lib/postgres";
 import { getDateLocale, getMessages } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/i18nServer";
+import { formatEuro } from "@/lib/currency";
 import TopPrizeTournament from "@/components/TopPrizeTournament";
 
 type UpcomingTournament = {
@@ -30,24 +31,41 @@ export default async function HomePage() {
   const t = getMessages(locale);
   const dateLocale = getDateLocale(locale);
 
-  const supabase = await createSupabaseServerClient();
-
-  const { data: upcoming } = await supabase
-    .from("tournaments")
-    .select("id, title, start_at, prize_pool, mode, games(name)")
-    .eq("status", "upcoming")
-    .order("start_at", { ascending: true })
-    .limit(4)
-    .returns<UpcomingTournament[]>();
-
-  const { data: topTournament } = await supabase
-    .from("tournaments")
-    .select("id, title, start_at, prize_pool, mode, games(name)")
-    .in("status", ["upcoming", "live"])
-    .order("prize_pool", { ascending: false })
-    .order("start_at", { ascending: true })
-    .limit(1)
-    .maybeSingle<UpcomingTournament>();
+  const [upcoming, topTournament] = await Promise.all([
+    pgRows<UpcomingTournament>(
+      `
+        select
+          t.id,
+          t.title,
+          t.start_at,
+          t.prize_pool,
+          t.mode,
+          json_build_object('name', g.name) as games
+        from tournaments t
+        left join games g on g.id = t.game_id
+        where t.status = 'upcoming'
+        order by t.start_at asc
+        limit 4
+      `
+    ),
+    pgMaybeOne<UpcomingTournament>(
+      `
+        select
+          t.id,
+          t.title,
+          t.start_at,
+          t.prize_pool,
+          t.mode,
+          json_build_object('name', g.name) as games
+        from tournaments t
+        left join games g on g.id = t.game_id
+        where t.status = any($1::text[])
+        order by t.prize_pool desc nulls last, t.start_at asc
+        limit 1
+      `,
+      [["upcoming", "live", "current"]]
+    ),
+  ]);
 
   return (
     <div className="home-no-block-bg relative left-1/2 right-1/2 w-screen -translate-x-1/2 space-y-5 px-3 sm:space-y-6 sm:px-4 lg:px-6 xl:px-8">
@@ -116,17 +134,17 @@ export default async function HomePage() {
         </div>
 
         <div className="space-y-3">
-          {(upcoming ?? []).map((item) => (
+          {upcoming.map((item) => (
             <Link key={item.id} href={`/tournaments/${item.id}`} className="block rounded-2xl border border-white/10 p-4 transition hover:border-cyan-300/30 hover:bg-white/5">
-              <div className="text-xs text-white/55 break-words">
+              <div className="break-words text-xs text-white/55">
                 {item.games?.name ?? "-"} | {String(item.mode).toUpperCase()} | {formatDate(item.start_at, dateLocale)}
               </div>
-              <div className="mt-1 text-sm font-semibold break-words">{item.title}</div>
-              <div className="mt-2 text-sm font-bold text-cyan-200">{Number(item.prize_pool ?? 0).toLocaleString(dateLocale)} RUB</div>
+              <div className="mt-1 break-words text-sm font-semibold">{item.title}</div>
+              <div className="mt-2 text-sm font-bold text-cyan-200">{formatEuro(item.prize_pool, locale)}</div>
             </Link>
           ))}
 
-          {(upcoming?.length ?? 0) === 0 && <div className="rounded-2xl border border-white/10 p-4 text-sm text-white/60">{t.home.noUpcoming}</div>}
+          {upcoming.length === 0 && <div className="rounded-2xl border border-white/10 p-4 text-sm text-white/60">{t.home.noUpcoming}</div>}
         </div>
       </section>
     </div>

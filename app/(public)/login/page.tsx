@@ -1,9 +1,21 @@
-﻿import Link from "next/link";
+import Link from "next/link";
 import { redirect } from "next/navigation";
-import { createSupabaseRouteClient } from "@/lib/supabaseRoute";
-import { createSupabaseServerClient } from "@/lib/supabaseServer";
-import { ensureProfileForAuthUser } from "@/lib/profileSync";
 import { getRequestLocale } from "@/lib/i18nServer";
+import {
+  authenticateWithPassword,
+  clearCurrentSession,
+  createSessionForUser,
+  getCurrentSession,
+  getProfileByUserId,
+  registerWithPassword,
+} from "@/lib/sessionAuth";
+import {
+  assertSameOriginServerAction,
+  consumeRateLimit,
+  getServerActionIp,
+  isValidEmail,
+  sanitizeTextInput,
+} from "@/lib/security";
 
 function isRedirectException(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
@@ -41,16 +53,14 @@ export default async function LoginPage({
   const locale = await getRequestLocale();
   const isEn = locale === "en";
 
-  const serverSupabase = await createSupabaseServerClient();
   const sp = await searchParams;
-  const {
-    data: { user },
-  } = await serverSupabase.auth.getUser();
-  if (user && !sp.error) redirect("/");
+  const session = await getCurrentSession();
+  if (session?.user && !sp.error) redirect("/");
   const tab = sp.tab === "signup" ? "signup" : "signin";
 
   async function signIn(formData: FormData) {
     "use server";
+
     const locale = await getRequestLocale();
     const isEn = locale === "en";
     const invalidDataMsg = isEn
@@ -58,43 +68,58 @@ export default async function LoginPage({
       : "Вы ввели неправильные данные, перепроверьте.";
 
     try {
-      const supabase = await createSupabaseRouteClient();
-      const email = String(formData.get("email") ?? "").trim().toLowerCase();
-      const password = String(formData.get("password") ?? "").trim();
+      await assertSameOriginServerAction();
 
-      if (!email || !password) {
+      const email = sanitizeTextInput(formData.get("email"), { maxLength: 160 }).toLowerCase();
+      const password = String(formData.get("password") ?? "").trim();
+      const ip = await getServerActionIp();
+
+      if (!email || !password || !isValidEmail(email)) {
         redirect(`/login?tab=signin&error=${encodeURIComponent(invalidDataMsg)}`);
       }
 
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) redirect(`/login?tab=signin&error=${encodeURIComponent(invalidDataMsg)}`);
+      const ipRate = await consumeRateLimit({
+        action: "login:ip",
+        key: ip,
+        limit: 10,
+        windowSeconds: 10 * 60,
+      });
+      if (!ipRate.allowed) {
+        redirect(`/login?tab=signin&error=${encodeURIComponent(isEn ? "Too many sign in attempts. Try again later." : "Слишком много попыток входа. Попробуйте позже.")}`);
+      }
 
-      if (data.user?.id) {
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("is_banned, banned_until, restricted_until")
-          .eq("id", data.user.id)
-          .maybeSingle<{ is_banned?: boolean | null; banned_until?: string | null; restricted_until?: string | null }>();
+      const emailRate = await consumeRateLimit({
+        action: "login:ip-email",
+        key: `${ip}:${email}`,
+        limit: 5,
+        windowSeconds: 10 * 60,
+      });
+      if (!emailRate.allowed) {
+        redirect(`/login?tab=signin&error=${encodeURIComponent(isEn ? "Too many sign in attempts. Try again later." : "Слишком много попыток входа. Попробуйте позже.")}`);
+      }
 
+      const account = await authenticateWithPassword(email, password);
+      if (!account?.userId) {
+        redirect(`/login?tab=signin&error=${encodeURIComponent(invalidDataMsg)}`);
+      }
+
+      const profile = await getProfileByUserId(account.userId);
+      if (profile) {
         const now = Date.now();
         const isBanned =
-          Boolean(profile?.is_banned) ||
-          (profile?.banned_until ? new Date(profile.banned_until).getTime() > now : false);
-        const isRestricted = profile?.restricted_until ? new Date(profile.restricted_until).getTime() > now : false;
+          Boolean(profile.is_banned) ||
+          (profile.banned_until ? new Date(profile.banned_until).getTime() > now : false);
+        const isRestricted = profile.restricted_until ? new Date(profile.restricted_until).getTime() > now : false;
 
         if (isBanned || isRestricted) {
-          await supabase.auth.signOut();
-          const until = isBanned ? formatUntil(profile?.banned_until, locale) : formatUntil(profile?.restricted_until, locale);
+          await clearCurrentSession();
+          const until = isBanned ? formatUntil(profile.banned_until, locale) : formatUntil(profile.restricted_until, locale);
           const message = blockedMessage(locale, isBanned, until);
           redirect(`/login?tab=signin&error=${encodeURIComponent(message)}`);
         }
       }
 
-      if (data.user?.id) {
-        try {
-          await ensureProfileForAuthUser({ userId: data.user.id, email, roleFromMetadata: data.user.app_metadata?.role });
-        } catch {}
-      }
+      await createSessionForUser(account.userId);
       redirect("/");
     } catch (e) {
       if (isRedirectException(e)) throw e;
@@ -105,6 +130,7 @@ export default async function LoginPage({
 
   async function signUp(formData: FormData) {
     "use server";
+
     const locale = await getRequestLocale();
     const isEn = locale === "en";
     const invalidDataMsg = isEn
@@ -112,37 +138,33 @@ export default async function LoginPage({
       : "Вы ввели неправильные данные, перепроверьте.";
 
     try {
-      const supabase = await createSupabaseRouteClient();
-      const email = String(formData.get("email") ?? "").trim().toLowerCase();
+      await assertSameOriginServerAction();
+
+      const email = sanitizeTextInput(formData.get("email"), { maxLength: 160 }).toLowerCase();
       const password = String(formData.get("password") ?? "").trim();
-      const usernameInput = String(formData.get("username") ?? "").trim();
+      const usernameInput = sanitizeTextInput(formData.get("username"), { maxLength: 24 });
+      const ip = await getServerActionIp();
 
-      if (!email || !password) {
-        redirect(`/login?tab=signup&error=${encodeURIComponent(invalidDataMsg)}`);
-      }
-      if (password.length < 6) {
+      if (!email || !password || !isValidEmail(email) || password.length < 6) {
         redirect(`/login?tab=signup&error=${encodeURIComponent(invalidDataMsg)}`);
       }
 
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: { emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"}/auth/callback` },
+      const signUpRate = await consumeRateLimit({
+        action: "signup:ip",
+        key: ip,
+        limit: 5,
+        windowSeconds: 30 * 60,
       });
-      if (error) redirect(`/login?tab=signup&error=${encodeURIComponent(invalidDataMsg)}`);
-
-      if (data.session?.user?.id) {
-        try {
-          await ensureProfileForAuthUser({
-            userId: data.session.user.id,
-            email,
-            usernameInput,
-            roleFromMetadata: data.session.user.app_metadata?.role,
-          });
-        } catch {}
+      if (!signUpRate.allowed) {
+        redirect(`/login?tab=signup&error=${encodeURIComponent(isEn ? "Too many registration attempts. Try again later." : "Слишком много попыток регистрации. Попробуйте позже.")}`);
       }
 
-      redirect(`/login?tab=signin&ok=${encodeURIComponent(isEn ? "Registration successful. Now sign in." : "Регистрация успешна. Теперь войдите в аккаунт.")}`);
+      await registerWithPassword({ email, password, usernameInput });
+      redirect(
+        `/login?tab=signin&ok=${encodeURIComponent(
+          isEn ? "Registration successful. Now sign in." : "Регистрация успешна. Теперь войдите в аккаунт."
+        )}`
+      );
     } catch (e) {
       if (isRedirectException(e)) throw e;
       const message = isEn ? "Sign up error" : "Ошибка регистрации";
@@ -157,10 +179,22 @@ export default async function LoginPage({
         <p className="mt-2 text-sm muted">{isEn ? "Sign in or create a new account." : "Войдите или создайте новый аккаунт."}</p>
 
         <div className="mt-5 grid grid-cols-2 gap-2 rounded-xl border border-white/10 bg-black/25 p-1">
-          <Link href="/login?tab=signin" className={["rounded-lg px-3 py-2 text-center text-sm font-semibold", tab === "signin" ? "bg-white text-black" : "text-white/75 hover:bg-white/5"].join(" ")}>
+          <Link
+            href="/login?tab=signin"
+            className={[
+              "rounded-lg px-3 py-2 text-center text-sm font-semibold",
+              tab === "signin" ? "bg-white text-black" : "text-white/75 hover:bg-white/5",
+            ].join(" ")}
+          >
             {isEn ? "Sign in" : "Вход"}
           </Link>
-          <Link href="/login?tab=signup" className={["rounded-lg px-3 py-2 text-center text-sm font-semibold", tab === "signup" ? "bg-white text-black" : "text-white/75 hover:bg-white/5"].join(" ")}>
+          <Link
+            href="/login?tab=signup"
+            className={[
+              "rounded-lg px-3 py-2 text-center text-sm font-semibold",
+              tab === "signup" ? "bg-white text-black" : "text-white/75 hover:bg-white/5",
+            ].join(" ")}
+          >
             {isEn ? "Sign up" : "Регистрация"}
           </Link>
         </div>
@@ -169,6 +203,7 @@ export default async function LoginPage({
         {sp.ok && <div className="mt-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-200">{sp.ok}</div>}
 
         {tab === "signin" ? (
+          <>
           <form action={signIn} className="mt-5 grid gap-3">
             <input name="email" type="email" required className="input" placeholder="you@mail.com" />
             <input name="password" type="password" required className="input" placeholder={isEn ? "Password" : "Пароль"} />
@@ -176,11 +211,23 @@ export default async function LoginPage({
               {isEn ? "Sign in" : "Войти"}
             </button>
           </form>
+          <div className="mt-2 text-right text-xs text-white/60">
+            <Link href="/reset-password" className="text-cyan-300 hover:text-cyan-200">
+              {isEn ? "Forgot password?" : "Забыли пароль?"}
+            </Link>
+          </div>
+          </>
         ) : (
           <form action={signUp} className="mt-5 grid gap-3">
             <input name="username" className="input" placeholder={isEn ? "Nickname (optional)" : "Ник (необязательно)"} />
             <input name="email" type="email" required className="input" placeholder="you@mail.com" />
-            <input name="password" type="password" required className="input" placeholder={isEn ? "Password (min 6 chars)" : "Пароль (минимум 6 символов)"} />
+            <input
+              name="password"
+              type="password"
+              required
+              className="input"
+              placeholder={isEn ? "Password (min 6 chars)" : "Пароль (минимум 6 символов)"}
+            />
             <button type="submit" className="btn-primary mt-1 w-full">
               {isEn ? "Create account" : "Создать аккаунт"}
             </button>

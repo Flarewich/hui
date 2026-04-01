@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Locale } from "@/lib/i18n";
-import { createSupabaseBrowserClient } from "@/lib/supabaseClient";
 
 type Thread = {
   id: string;
@@ -39,25 +38,27 @@ function toDate(ts: string, locale: Locale) {
 
 export default function FloatingSupportChat({ locale }: { locale: Locale }) {
   const isEn = locale === "en";
-  const supabase = useMemo(() => createSupabaseBrowserClient(), []);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
-  const [error, setError] = useState<string>("");
+  const [error, setError] = useState("");
   const [text, setText] = useState("");
   const [hasUnread, setHasUnread] = useState(false);
   const [data, setData] = useState<ChatPayload | null>(null);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
 
   const activeThread = useMemo(
-    () => data?.threads.find((t) => t.id === activeThreadId) ?? null,
-    [data?.threads, activeThreadId]
+    () => data?.threads.find((thread) => thread.id === activeThreadId) ?? null,
+    [activeThreadId, data?.threads]
   );
 
   const load = useCallback(
-    async (threadId?: string | null) => {
-      setLoading(true);
-      setError("");
+    async (threadId?: string | null, background = false) => {
+      if (!background) {
+        setLoading(true);
+        setError("");
+      }
+
       try {
         const query = threadId ? `?thread=${encodeURIComponent(threadId)}` : "";
         const res = await fetch(`/api/support/chat${query}`, { cache: "no-store" });
@@ -65,89 +66,63 @@ export default function FloatingSupportChat({ locale }: { locale: Locale }) {
         if (!res.ok) {
           throw new Error((payload as { error?: string }).error || "Failed to load chat");
         }
+
         const okPayload = payload as ChatPayload;
-        setData(okPayload);
-        setActiveThreadId(okPayload.activeThreadId);
+        setData((prev) => {
+          const previousCount = prev?.messages.length ?? 0;
+          if (background && previousCount < okPayload.messages.length && !open) {
+            setHasUnread(true);
+          }
+          return okPayload;
+        });
+        setActiveThreadId((prev) => {
+          if (prev && okPayload.threads.some((thread) => thread.id === prev)) {
+            return prev;
+          }
+          return okPayload.activeThreadId;
+        });
       } catch (e) {
-        setError(e instanceof Error ? e.message : isEn ? "Chat load error" : "Ошибка загрузки чата");
+        if (!background) {
+          setError(e instanceof Error ? e.message : isEn ? "Chat load error" : "Ошибка загрузки чата");
+        }
       } finally {
-        setLoading(false);
+        if (!background) setLoading(false);
       }
     },
-    [isEn]
+    [isEn, open]
   );
 
   useEffect(() => {
     if (!open) return;
     setHasUnread(false);
     void load(activeThreadId);
-  }, [open, load, activeThreadId]);
+  }, [activeThreadId, load, open]);
 
   useEffect(() => {
-    if (!open || !data?.role) return;
+    if (!data?.role) return;
 
-    const channel = supabase.channel(`support-chat-${data.role}-${activeThreadId ?? "none"}`);
+    const eventSource = new EventSource("/api/support/stream");
+    eventSource.addEventListener("message", () => {
+      void load(activeThreadId, true);
+    });
+    eventSource.addEventListener("error", () => {
+      eventSource.close();
+    });
 
-    if (data.role === "user" && activeThreadId) {
-      channel.on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "support_messages",
-          filter: `thread_id=eq.${activeThreadId}`,
-        },
-        () => {
-          if (open) {
-            void load(activeThreadId);
-          } else {
-            setHasUnread(true);
-          }
-        }
-      );
-    } else if (data.role === "admin") {
-      channel.on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "support_messages",
-        },
-        () => {
-          if (open) {
-            void load(activeThreadId);
-          } else {
-            setHasUnread(true);
-          }
-        }
-      );
-      channel.on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "support_threads",
-        },
-        () => {
-          if (open) {
-            void load(activeThreadId);
-          } else {
-            setHasUnread(true);
-          }
-        }
-      );
-    }
-
-    channel.subscribe();
+    const fallback = window.setInterval(() => {
+      void load(activeThreadId, true);
+    }, 30000);
 
     return () => {
-      void supabase.removeChannel(channel);
+      window.clearInterval(fallback);
+      eventSource.close();
     };
-  }, [open, data?.role, activeThreadId, load, supabase]);
+  }, [activeThreadId, data?.role, load]);
 
   async function sendMessage() {
     const body = text.trim();
     if (!body) return;
+
     setSending(true);
     setError("");
     try {
@@ -160,8 +135,9 @@ export default function FloatingSupportChat({ locale }: { locale: Locale }) {
       if (!res.ok) {
         throw new Error(payload.error || "Failed to send");
       }
+
       setText("");
-      await load(activeThreadId);
+      await load(activeThreadId, true);
     } catch (e) {
       setError(e instanceof Error ? e.message : isEn ? "Send error" : "Ошибка отправки");
     } finally {
@@ -199,9 +175,9 @@ export default function FloatingSupportChat({ locale }: { locale: Locale }) {
                   void load(nextId);
                 }}
               >
-                {(data.threads ?? []).map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.label} [{t.status}]
+                {(data.threads ?? []).map((thread) => (
+                  <option key={thread.id} value={thread.id}>
+                    {thread.label} [{thread.status}]
                   </option>
                 ))}
               </select>
@@ -213,8 +189,8 @@ export default function FloatingSupportChat({ locale }: { locale: Locale }) {
             {!loading && (data?.messages?.length ?? 0) === 0 && (
               <div className="text-xs text-white/60">{isEn ? "No messages yet." : "Пока нет сообщений."}</div>
             )}
-            {(data?.messages ?? []).map((m) => {
-              const mine = m.sender_id === data?.me?.id;
+            {(data?.messages ?? []).map((message) => {
+              const mine = message.sender_id === data?.me?.id;
               const label = mine
                 ? isEn
                   ? "You"
@@ -227,7 +203,7 @@ export default function FloatingSupportChat({ locale }: { locale: Locale }) {
                     ? "Support"
                     : "Поддержка";
               return (
-                <div key={m.id} className={mine ? "flex justify-end" : "flex justify-start"}>
+                <div key={message.id} className={mine ? "flex justify-end" : "flex justify-start"}>
                   <div
                     className={[
                       "max-w-[88%] border px-2.5 py-2 text-xs",
@@ -237,8 +213,8 @@ export default function FloatingSupportChat({ locale }: { locale: Locale }) {
                     ].join(" ")}
                   >
                     <div className="text-[10px] text-white/50">{label}</div>
-                    <div className="mt-1 whitespace-pre-wrap">{m.body}</div>
-                    <div className="mt-1 text-[10px] text-white/40">{toDate(m.created_at, locale)}</div>
+                    <div className="mt-1 whitespace-pre-wrap">{message.body}</div>
+                    <div className="mt-1 text-[10px] text-white/40">{toDate(message.created_at, locale)}</div>
                   </div>
                 </div>
               );
@@ -273,7 +249,7 @@ export default function FloatingSupportChat({ locale }: { locale: Locale }) {
       )}
 
       <button
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => setOpen((value) => !value)}
         className="relative flex h-12 w-12 items-center justify-center rounded-full border border-cyan-300/45 bg-cyan-500/20 text-lg text-cyan-50 shadow-xl shadow-cyan-900/40 transition hover:bg-cyan-500/30"
         aria-label={isEn ? "Open support chat" : "Открыть чат поддержки"}
       >

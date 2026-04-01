@@ -28,7 +28,7 @@ begin
   end;
 
   select count(*) into v_count
-  from public.registrationsна
+  from public.registrations
   where tournament_id = new.tournament_id;
 
   if v_count >= v_limit then
@@ -44,3 +44,4 @@ create trigger trg_enforce_tournament_capacity
 before insert on public.registrations
 for each row
 execute function public.enforce_tournament_capacity();
+

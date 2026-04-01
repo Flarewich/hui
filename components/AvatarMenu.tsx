@@ -15,12 +15,15 @@ export default function AvatarMenu({
   avatarUrl,
   isAdmin,
   labels,
+  unreadNotifications = 0,
 }: {
   username: string;
   avatarUrl: string | null;
   isAdmin: boolean;
+  unreadNotifications?: number;
   labels: {
     profile: string;
+    notifications: string;
     support: string;
     adminMenu: string;
     dashboard: string;
@@ -30,6 +33,7 @@ export default function AvatarMenu({
     supportChat: string;
     usersAndRoles: string;
     sponsors: string;
+    emails: string;
     logout: string;
   };
 }) {
@@ -71,12 +75,25 @@ export default function AvatarMenu({
             </div>
           )}
         </div>
+        {unreadNotifications > 0 && (
+          <span className="rounded-full bg-cyan-300 px-1.5 py-0.5 text-[10px] font-bold text-black">
+            {unreadNotifications > 99 ? "99+" : unreadNotifications}
+          </span>
+        )}
       </button>
 
       {open && (
         <div className="absolute right-0 mt-2 w-64 max-w-[calc(100vw-1rem)] overflow-hidden rounded-2xl bg-[#060d1f]/90 outline outline-1 outline-cyan-300/35 backdrop-blur-xl">
           <Link className="block px-4 py-3 text-sm hover:bg-white/5" href="/profile" onClick={closeAll}>
             {labels.profile}
+          </Link>
+          <Link className="flex items-center justify-between px-4 py-3 text-sm hover:bg-white/5" href="/profile#notifications" onClick={closeAll}>
+            <span>{labels.notifications}</span>
+            {unreadNotifications > 0 && (
+              <span className="rounded-full bg-cyan-300 px-1.5 py-0.5 text-[10px] font-bold text-black">
+                {unreadNotifications > 99 ? "99+" : unreadNotifications}
+              </span>
+            )}
           </Link>
           <Link className="block px-4 py-3 text-sm hover:bg-white/5" href="/support" onClick={closeAll}>
             {labels.support}
@@ -115,6 +132,9 @@ export default function AvatarMenu({
                   </Link>
                   <Link className="block px-5 py-2 text-xs text-white/80 hover:bg-white/5" href="/admin/sponsors" onClick={closeAll}>
                     {labels.sponsors}
+                  </Link>
+                  <Link className="block px-5 py-2 text-xs text-white/80 hover:bg-white/5" href="/admin/emails" onClick={closeAll}>
+                    {labels.emails}
                   </Link>
                 </div>
               )}

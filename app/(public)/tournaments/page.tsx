@@ -1,14 +1,15 @@
-﻿import GameFilterRow from "@/components/GameFilterRow";
+import GameFilterRow from "@/components/GameFilterRow";
 import FiltersBar from "@/components/FiltersBar";
 import TournamentCard from "@/components/TournamentCard";
 import PageShell from "@/components/PageShell";
 import Markdown from "@/components/Markdown";
-import { createSupabaseServerClient } from "@/lib/supabaseServer";
 import { getSitePage } from "@/lib/pages";
 import { getDateLocale, getMessages } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/i18nServer";
 import { isStartingInFiveMinutes } from "@/lib/tournamentLimits";
 import { ensureDefaultGames } from "@/lib/defaultGames";
+import { pgRows } from "@/lib/postgres";
+import { euroLabel } from "@/lib/currency";
 
 function formatDate(ts: string, localeCode: string) {
   return new Date(ts).toLocaleString(localeCode, {
@@ -37,6 +38,7 @@ type TournamentRow = {
   title: string;
   status: string;
   mode: string;
+  game_id: string | null;
   start_at: string;
   prize_pool: number | null;
   participants?: number | null;
@@ -95,7 +97,6 @@ export default async function TournamentsPage({
   const q = (sp.q ?? "").trim();
   const sort: Sort = normalizeSort(sp.sort);
 
-  const supabase = await createSupabaseServerClient();
   await ensureDefaultGames();
 
   if (tab === "rules") {
@@ -152,19 +153,45 @@ export default async function TournamentsPage({
             </p>
           </article>
         </section>
-
       </PageShell>
     );
   }
 
-  const { data: games } = await supabase
-    .from("games")
-    .select("id, name, slug, icon_url")
-    .eq("is_active", true)
-    .order("name", { ascending: true })
-    .returns<Game[]>();
+  const [games, tournaments] = await Promise.all([
+    pgRows<Game>(
+      `
+        select id, name, slug, icon_url
+        from games
+        where is_active = true
+        order by name asc
+      `
+    ),
+    pgRows<TournamentRow>(
+      `
+        select
+          t.id,
+          t.title,
+          t.status,
+          t.mode,
+          t.game_id,
+          t.start_at,
+          t.prize_pool,
+          coalesce(tc.participants, 0) as participants,
+          json_build_object('name', g.name, 'slug', g.slug, 'icon_url', g.icon_url) as games
+        from tournaments t
+        left join games g on g.id = t.game_id
+        left join (
+          select tournament_id, count(distinct coalesce(team_id, user_id))::int as participants
+          from registrations
+          group by tournament_id
+        ) tc on tc.tournament_id = t.id
+        limit 300
+      `
+    ),
+  ]);
+
   const gameGroups = new Map<string, Game[]>();
-  for (const gameItem of games ?? []) {
+  for (const gameItem of games) {
     const key = gameKey(gameItem);
     const list = gameGroups.get(key) ?? [];
     list.push(gameItem);
@@ -182,36 +209,26 @@ export default async function TournamentsPage({
     );
   }
 
-  const fromTable = sort === "popular" ? "tournaments_with_counts" : "tournaments";
-
-  let query = supabase
-    .from(fromTable)
-    .select(
-      sort === "popular"
-        ? "id, title, status, mode, game_id, start_at, prize_pool, participants, games(name, slug, icon_url)"
-        : "id, title, status, mode, game_id, start_at, prize_pool, games(name, slug, icon_url)"
-    );
-
-  if (mode !== "all") query = query.eq("mode", mode);
-  if (q) query = query.ilike("title", `%${q}%`);
-  if (game !== "all") {
-    const selectedGameIds = gameIdsBySlug.get(game) ?? [];
-    if (selectedGameIds.length === 1) query = query.eq("game_id", selectedGameIds[0]);
-    if (selectedGameIds.length > 1) query = query.in("game_id", selectedGameIds);
-  }
-
-  if (sort === "prize" || sort === "top") {
-    query = query.order("prize_pool", { ascending: false });
-  } else if (sort === "popular") {
-    query = query.order("participants", { ascending: false }).order("start_at", { ascending: true });
-  } else {
-    query = query.order("start_at", { ascending: true });
-  }
-
-  const { data: tournaments, error } = await query.limit(60).returns<TournamentRow[]>();
-  const filteredTournaments = (tournaments ?? []).filter((item) => {
+  const filteredTournaments = tournaments.filter((item) => {
+    if (mode !== "all" && item.mode !== mode) return false;
+    if (q && !item.title.toLowerCase().includes(q.toLowerCase())) return false;
+    if (game !== "all") {
+      const selectedGameIds = gameIdsBySlug.get(game) ?? [];
+      if (selectedGameIds.length > 0 && !selectedGameIds.includes(item.game_id ?? "")) return false;
+    }
     if (status !== "all" && effectiveStatus(item.status, item.start_at) !== status) return false;
     return true;
+  });
+
+  filteredTournaments.sort((a, b) => {
+    if (sort === "prize" || sort === "top") {
+      const prizeDiff = (b.prize_pool ?? 0) - (a.prize_pool ?? 0);
+      if (prizeDiff !== 0) return prizeDiff;
+    } else if (sort === "popular") {
+      const participantsDiff = (b.participants ?? 0) - (a.participants ?? 0);
+      if (participantsDiff !== 0) return participantsDiff;
+    }
+    return new Date(a.start_at).getTime() - new Date(b.start_at).getTime();
   });
 
   return (
@@ -234,19 +251,13 @@ export default async function TournamentsPage({
         </div>
       </div>
 
-      {error && (
-        <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">
-          {t.tournamentsPage.loadError}: {error.message}
-        </div>
-      )}
-
       <div className="space-y-4">
         {filteredTournaments.map((item) => (
           <TournamentCard
             key={item.id}
             registerLabel={t.tournamentsPage.register}
             numberLocale={dateLocale}
-            currencyLabel="RUB"
+            currencyLabel={euroLabel()}
             locale={locale}
             startsInFiveMinutes={isStartingInFiveMinutes(item.start_at)}
             t={{
@@ -264,7 +275,7 @@ export default async function TournamentsPage({
           />
         ))}
 
-        {!error && filteredTournaments.length === 0 && (
+        {filteredTournaments.length === 0 && (
           <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-sm text-white/60">
             {t.tournamentsPage.empty}
           </div>
@@ -273,4 +284,3 @@ export default async function TournamentsPage({
     </div>
   );
 }
-

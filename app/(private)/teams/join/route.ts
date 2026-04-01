@@ -1,8 +1,10 @@
-﻿import { NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
-import { createSupabaseRouteClient } from "@/lib/supabaseRoute";
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { localeCookieName, resolveLocale } from "@/lib/i18n";
+import { createNotification } from "@/lib/notifications";
+import { pgMaybeOne, pgOne, pgRows, withPgTransaction } from "@/lib/postgres";
+import { assertSameOriginRequest } from "@/lib/security";
+import { getCurrentSession } from "@/lib/sessionAuth";
 import { getTeamSizeLimit } from "@/lib/tournamentLimits";
 
 function getLocale(request: Request) {
@@ -21,11 +23,15 @@ function redirectToProfile(request: Request, query: string) {
 }
 
 export async function POST(request: Request) {
-  const supabase = await createSupabaseRouteClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  try {
+    assertSameOriginRequest(request);
+  } catch {
+    const url = new URL(request.url);
+    return NextResponse.redirect(`${url.origin}/profile?error=${encodeURIComponent("Forbidden")}`, { status: 303 });
+  }
 
+  const session = await getCurrentSession();
+  const user = session?.user;
   if (!user) {
     const url = new URL(request.url);
     return NextResponse.redirect(`${url.origin}/login`, { status: 303 });
@@ -39,9 +45,24 @@ export async function POST(request: Request) {
     return redirectToProfile(request, `error=${encodeURIComponent(msg(request, "Team ID is missing", "Не передан ID команды"))}`);
   }
 
-  const { data: team, error: teamError } = await supabaseAdmin.from("teams").select("id, mode, join_type, join_password").eq("id", teamId).maybeSingle();
+  const team = await pgMaybeOne<{
+    id: string;
+    mode: string | null;
+    join_type: string | null;
+    join_password: string | null;
+    captain_id: string | null;
+    name: string | null;
+  }>(
+    `
+      select id, mode, join_type, join_password, captain_id, name
+      from teams
+      where id = $1
+      limit 1
+    `,
+    [teamId]
+  );
 
-  if (teamError || !team) {
+  if (!team) {
     return redirectToProfile(request, `error=${encodeURIComponent(msg(request, "Team not found", "Команда не найдена"))}`);
   }
 
@@ -54,33 +75,64 @@ export async function POST(request: Request) {
     }
   }
 
-  const { data: inTeam } = await supabaseAdmin.from("team_members").select("id").eq("team_id", teamId).eq("user_id", user.id).maybeSingle();
-
-  if (inTeam?.id) {
+  const inTeam = await pgMaybeOne<{ user_id: string }>(
+    `
+      select user_id
+      from team_members
+      where team_id = $1 and user_id = $2
+      limit 1
+    `,
+    [teamId, user.id]
+  );
+  if (inTeam?.user_id) {
     return redirectToProfile(request, `ok=${encodeURIComponent(msg(request, "You are already in this team", "Вы уже в этой команде"))}`);
   }
 
-  const { data: myMemberships } = await supabaseAdmin.from("team_members").select("team_id").eq("user_id", user.id).returns<Array<{ team_id: string }>>();
-  const myTeamIds = (myMemberships ?? []).map((x) => x.team_id).filter(Boolean);
+  const myMemberships = await pgRows<{ team_id: string }>(
+    `
+      select team_id
+      from team_members
+      where user_id = $1
+    `,
+    [user.id]
+  );
+  const myTeamIds = myMemberships.map((x) => x.team_id).filter(Boolean);
 
-  // Block only if user is already in another team within the same tournament.
-  const { data: targetTeamRegistration } = await supabaseAdmin
-    .from("registrations")
-    .select("tournament_id")
-    .eq("team_id", teamId)
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle<{ tournament_id: string }>();
+  const targetTeamRegistration = await pgMaybeOne<{ tournament_id: string }>(
+    `
+      select tournament_id
+      from registrations
+      where team_id = $1
+      order by created_at asc
+      limit 1
+    `,
+    [teamId]
+  );
+
+  const existingTournamentRegistration = targetTeamRegistration?.tournament_id
+    ? await pgMaybeOne<{ id: string }>(
+        `
+          select id
+          from registrations
+          where tournament_id = $1 and user_id = $2
+          limit 1
+        `,
+        [targetTeamRegistration.tournament_id, user.id]
+      )
+    : null;
 
   if (targetTeamRegistration?.tournament_id && myTeamIds.length > 0) {
-    const { data: myRegisteredTeams } = await supabaseAdmin
-      .from("registrations")
-      .select("team_id")
-      .eq("tournament_id", targetTeamRegistration.tournament_id)
-      .in("team_id", myTeamIds)
-      .returns<Array<{ team_id: string | null }>>();
+    const myRegisteredTeams = await pgRows<{ team_id: string | null }>(
+      `
+        select team_id
+        from registrations
+        where tournament_id = $1
+          and team_id = any($2::uuid[])
+      `,
+      [targetTeamRegistration.tournament_id, myTeamIds]
+    );
 
-    if ((myRegisteredTeams ?? []).some((row) => String(row.team_id ?? "").length > 0)) {
+    if (myRegisteredTeams.some((row) => String(row.team_id ?? "").length > 0)) {
       return redirectToProfile(
         request,
         `error=${encodeURIComponent(msg(request, "You are already in a team for this tournament", "Вы уже состоите в команде этого турнира"))}`
@@ -88,42 +140,82 @@ export async function POST(request: Request) {
     }
   }
 
-  const { count } = await supabaseAdmin.from("team_members").select("id", { count: "exact", head: true }).eq("team_id", teamId);
+  const countRow = await pgOne<{ count: string }>(
+    `
+      select count(*)::text as count
+      from team_members
+      where team_id = $1
+    `,
+    [teamId]
+  );
 
-  const { data: registration } = await supabaseAdmin
-    .from("registrations")
-    .select("tournament_id")
-    .eq("team_id", teamId)
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle<{ tournament_id: string }>();
+  const registration = await pgMaybeOne<{ tournament_id: string; game_slug: string | null; game_name: string | null }>(
+    `
+      select r.tournament_id, g.slug as game_slug, g.name as game_name
+      from registrations r
+      left join tournaments t on t.id = r.tournament_id
+      left join games g on g.id = t.game_id
+      where r.team_id = $1
+      order by r.created_at asc
+      limit 1
+    `,
+    [teamId]
+  );
 
-  let gameSlug: string | null = null;
-  let gameName: string | null = null;
-  if (registration?.tournament_id) {
-    const { data: tournament } = await supabaseAdmin
-      .from("tournaments")
-      .select("games(slug, name)")
-      .eq("id", registration.tournament_id)
-      .maybeSingle<{ games: { slug?: string | null; name?: string | null } | null }>();
-    gameSlug = tournament?.games?.slug ?? null;
-    gameName = tournament?.games?.name ?? null;
-  }
-
-  const limit = getTeamSizeLimit(team.mode ?? "squad", gameSlug, gameName);
-  if ((count ?? 0) >= limit) {
+  const limit = getTeamSizeLimit(team.mode ?? "squad", registration?.game_slug ?? null, registration?.game_name ?? null);
+  if (Number(countRow.count ?? 0) >= limit) {
     return redirectToProfile(request, `error=${encodeURIComponent(msg(request, "Team is full", "Команда уже укомплектована"))}`);
   }
 
-  const { error: insertError } = await supabaseAdmin.from("team_members").insert({ team_id: teamId, user_id: user.id });
+  try {
+    await withPgTransaction(async (client) => {
+      await client.query(
+        `
+          insert into team_members (team_id, user_id)
+          values ($1, $2)
+        `,
+        [teamId, user.id]
+      );
 
-  if (insertError) {
+      if (targetTeamRegistration?.tournament_id && !existingTournamentRegistration?.id) {
+        await client.query(
+          `
+            insert into registrations (tournament_id, user_id, team_id)
+            values ($1, $2, $3)
+            on conflict (tournament_id, user_id) do nothing
+          `,
+          [targetTeamRegistration.tournament_id, user.id, teamId]
+        );
+      }
+    });
+  } catch {
     return redirectToProfile(request, `error=${encodeURIComponent(msg(request, "Failed to join team", "Не удалось вступить в команду"))}`);
   }
 
   revalidatePath("/profile");
   revalidatePath("/tournaments");
+  if (targetTeamRegistration?.tournament_id) {
+    revalidatePath(`/tournaments/${targetTeamRegistration.tournament_id}`);
+    revalidatePath(`/tournaments/${targetTeamRegistration.tournament_id}/room`);
+  }
+
+  await createNotification({
+    userId: user.id,
+    type: "team_joined",
+    title: "You joined a team",
+    body: team.name ? `Team: ${team.name}` : null,
+    href: "/profile#teams",
+  });
+
+  if (team.captain_id && team.captain_id !== user.id) {
+    await createNotification({
+      userId: team.captain_id,
+      type: "team_member_joined",
+      title: "New team member joined",
+      body: team.name ? `Team: ${team.name}` : null,
+      href: "/profile#teams",
+    });
+  }
 
   return redirectToProfile(request, `ok=${encodeURIComponent(msg(request, "You joined the team", "Вы присоединились к команде"))}`);
 }
-

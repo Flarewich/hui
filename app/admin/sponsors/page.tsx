@@ -1,8 +1,12 @@
-﻿import { revalidatePath } from "next/cache";
+import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/auth";
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { getUserEmail, queueEmail } from "@/lib/email";
 import { ensureSponsorRecordForProfile } from "@/lib/sponsorSync";
+import { ensureSponsorRequestsTable, listSponsorRequests, updateSponsorRequestStatus, type SponsorRequestRow } from "@/lib/sponsorRequests";
 import { getRequestLocale } from "@/lib/i18nServer";
+import { savePublicUpload } from "@/lib/localUploads";
+import { createNotification } from "@/lib/notifications";
+import { pgMaybeOne, pgQuery, pgRows } from "@/lib/postgres";
 
 type SponsorRow = {
   id: string;
@@ -20,70 +24,163 @@ type UserRow = {
 };
 
 const tierOptions = ["title", "gold", "silver", "partner"] as const;
-const SPONSOR_BUCKET = process.env.NEXT_PUBLIC_SUPABASE_SPONSOR_BUCKET || "sponsors";
 const MAX_LOGO_BYTES = 5 * 1024 * 1024;
 
-function sanitizeFileName(name: string) {
-  return name.replace(/[^a-zA-Z0-9._-]/g, "_").toLowerCase();
+function toDate(ts: string, locale: "ru" | "en") {
+  return new Date(ts).toLocaleString(locale === "en" ? "en-US" : "ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function requestStatusLabel(status: string, locale: "ru" | "en") {
+  if (locale === "en") return status;
+  if (status === "pending_review") return "на проверке";
+  if (status === "reviewed") return "просмотрено";
+  if (status === "approved") return "одобрено";
+  if (status === "rejected") return "отклонено";
+  return status;
 }
 
 async function uploadSponsorLogo(file: File, sponsorId: string) {
-  const ext = sanitizeFileName(file.name).split(".").pop() || "bin";
-  const path = `${sponsorId}/${Date.now()}.${ext}`;
-  const arrayBuffer = await file.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
-  let upload = await supabaseAdmin.storage.from(SPONSOR_BUCKET).upload(path, buffer, {
-    contentType: file.type || "application/octet-stream",
-    upsert: true,
+  if (file.size > MAX_LOGO_BYTES) {
+    throw new Error("Sponsor logo file is too large");
+  }
+  return savePublicUpload({
+    folder: "sponsors",
+    entityId: sponsorId,
+    file,
   });
+}
 
-  // Create bucket on first use if it does not exist, then retry upload once.
-  if (upload.error?.message?.toLowerCase().includes("bucket not found")) {
-    const { error: createBucketError } = await supabaseAdmin.storage.createBucket(SPONSOR_BUCKET, {
-      public: true,
-      fileSizeLimit: `${MAX_LOGO_BYTES}`,
-    });
-    if (!createBucketError) {
-      upload = await supabaseAdmin.storage.from(SPONSOR_BUCKET).upload(path, buffer, {
-        contentType: file.type || "application/octet-stream",
-        upsert: true,
-      });
-    }
-  }
+function RequestCard({
+  item,
+  locale,
+  setRequestStatus,
+  approveRequest,
+  deleteRequest,
+}: {
+  item: SponsorRequestRow;
+  locale: "ru" | "en";
+  setRequestStatus: (formData: FormData) => Promise<void>;
+  approveRequest: (formData: FormData) => Promise<void>;
+  deleteRequest: (formData: FormData) => Promise<void>;
+}) {
+  const isEn = locale === "en";
 
-  if (upload.error) {
-    throw new Error(upload.error.message || "Failed to upload sponsor logo");
-  }
+  return (
+    <article className="rounded-2xl border border-white/10 bg-black/20 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold">{item.full_name}</div>
+          <div className="mt-1 text-xs text-white/60">
+            {item.username ? `@${item.username}` : item.user_id.slice(0, 8)} • {toDate(item.created_at, locale)}
+          </div>
+        </div>
+        <div className="rounded-xl border border-white/15 bg-black/25 px-3 py-1 text-xs">
+          {requestStatusLabel(item.status, locale)}
+        </div>
+      </div>
 
-  const { data } = supabaseAdmin.storage.from(SPONSOR_BUCKET).getPublicUrl(path);
-  return data.publicUrl;
+      <div className="mt-3 grid gap-3 md:grid-cols-2">
+        <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+          <div className="text-[11px] uppercase tracking-wide text-white/45">{isEn ? "Brand" : "Бренд"}</div>
+          <div className="mt-1 text-sm">{item.brand_name || "-"}</div>
+        </div>
+        <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+          <div className="text-[11px] uppercase tracking-wide text-white/45">{isEn ? "Email" : "Email"}</div>
+          <div className="mt-1 text-sm break-all">{item.contact_email}</div>
+        </div>
+      </div>
+
+      <div className="mt-3 rounded-xl border border-white/10 bg-white/5 p-3">
+        <div className="text-[11px] uppercase tracking-wide text-white/45">{isEn ? "Contacts" : "Контакты"}</div>
+        <div className="mt-1 whitespace-pre-wrap text-sm text-white/85">{item.contact_details}</div>
+      </div>
+
+      <div className="mt-3 rounded-xl border border-white/10 bg-white/5 p-3">
+        <div className="text-[11px] uppercase tracking-wide text-white/45">{isEn ? "Offer / motivation" : "Что предлагает / почему хочет стать спонсором"}</div>
+        <div className="mt-1 whitespace-pre-wrap text-sm text-white/85">{item.offer_summary}</div>
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        <form action={approveRequest}>
+          <input type="hidden" name="request_id" value={item.id} />
+          <input type="hidden" name="user_id" value={item.user_id} />
+          <input type="hidden" name="username" value={item.username ?? ""} />
+          <button type="submit" className="rounded-xl border border-emerald-400/35 bg-emerald-500/10 px-3 py-1.5 text-xs text-emerald-100 hover:bg-emerald-500/20">
+            {isEn ? "Approve + sponsor role" : "Одобрить + выдать роль sponsor"}
+          </button>
+        </form>
+
+        <form action={setRequestStatus}>
+          <input type="hidden" name="request_id" value={item.id} />
+          <input type="hidden" name="status" value="reviewed" />
+          <button type="submit" className="rounded-xl border border-cyan-400/35 bg-cyan-500/10 px-3 py-1.5 text-xs text-cyan-100 hover:bg-cyan-500/20">
+            {isEn ? "Mark reviewed" : "Отметить просмотренной"}
+          </button>
+        </form>
+
+        <form action={setRequestStatus}>
+          <input type="hidden" name="request_id" value={item.id} />
+          <input type="hidden" name="status" value="rejected" />
+          <button type="submit" className="rounded-xl border border-red-400/35 bg-red-500/10 px-3 py-1.5 text-xs text-red-100 hover:bg-red-500/20">
+            {isEn ? "Reject" : "Отклонить"}
+          </button>
+        </form>
+
+        <form action={setRequestStatus}>
+          <input type="hidden" name="request_id" value={item.id} />
+          <input type="hidden" name="status" value="pending_review" />
+          <button type="submit" className="rounded-xl border border-white/20 bg-black/25 px-3 py-1.5 text-xs hover:bg-white/5">
+            {isEn ? "Return to pending" : "Вернуть в pending"}
+          </button>
+        </form>
+
+        <form action={deleteRequest}>
+          <input type="hidden" name="request_id" value={item.id} />
+          <button type="submit" className="rounded-xl border border-red-500/45 bg-red-600/15 px-3 py-1.5 text-xs text-red-100 hover:bg-red-600/25">
+            {isEn ? "Delete request" : "Удалить заявку"}
+          </button>
+        </form>
+      </div>
+    </article>
+  );
 }
 
 export default async function AdminSponsorsPage() {
   const locale = await getRequestLocale();
   const isEn = locale === "en";
-  const { supabase, user } = await requireAdmin();
+  const { user } = await requireAdmin();
 
-  const [{ data: sponsors, error: sponsorsError }, { data: users, error: usersError }] = await Promise.all([
-    supabase
-      .from("sponsors")
-      .select("id, name, href, tier, logo_url, is_active")
-      .order("tier", { ascending: true })
-      .order("name", { ascending: true })
-      .returns<SponsorRow[]>(),
-    supabase
-      .from("profiles")
-      .select("id, username, role")
-      .order("created_at", { ascending: false })
-      .limit(200)
-      .returns<UserRow[]>(),
+  await ensureSponsorRequestsTable();
+
+  const [sponsors, users, requests] = await Promise.all([
+    pgRows<SponsorRow>(
+      `
+        select id, name, href, tier, logo_url, is_active
+        from sponsors
+        order by tier asc, name asc
+      `
+    ),
+    pgRows<UserRow>(
+      `
+        select id, username, role
+        from profiles
+        order by created_at desc nulls last
+        limit 200
+      `
+    ),
+    listSponsorRequests(),
   ]);
 
   async function createSponsor(formData: FormData) {
     "use server";
 
     await requireAdmin();
-
     const name = String(formData.get("name") ?? "").trim();
     const hrefRaw = String(formData.get("href") ?? "").trim();
     const logoFile = formData.get("logo_file");
@@ -92,26 +189,22 @@ export default async function AdminSponsorsPage() {
 
     if (!name) return;
     const tier = tierOptions.includes(tierRaw as (typeof tierOptions)[number]) ? tierRaw : "partner";
-
-    const { data: created, error: createError } = await supabaseAdmin
-      .from("sponsors")
-      .insert({
-        name,
-        href: hrefRaw || null,
-        tier,
-        is_active: isActive,
-      })
-      .select("id")
-      .single();
-
-    if (createError || !created?.id) return;
+    const created = await pgMaybeOne<{ id: string }>(
+      `
+        insert into sponsors (name, href, tier, is_active)
+        values ($1, $2, $3, $4)
+        returning id
+      `,
+      [name, hrefRaw || null, tier, isActive]
+    );
+    if (!created?.id) return;
 
     if (logoFile instanceof File && logoFile.size > 0) {
       if (!logoFile.type.startsWith("image/")) return;
       if (logoFile.size > MAX_LOGO_BYTES) return;
 
       const logoUrl = await uploadSponsorLogo(logoFile, created.id);
-      await supabaseAdmin.from("sponsors").update({ logo_url: logoUrl }).eq("id", created.id);
+      await pgQuery(`update sponsors set logo_url = $2 where id = $1`, [created.id, logoUrl]);
     }
 
     revalidatePath("/admin/sponsors");
@@ -122,7 +215,6 @@ export default async function AdminSponsorsPage() {
     "use server";
 
     await requireAdmin();
-
     const id = String(formData.get("id") ?? "").trim();
     const name = String(formData.get("name") ?? "").trim();
     const hrefRaw = String(formData.get("href") ?? "").trim();
@@ -142,16 +234,14 @@ export default async function AdminSponsorsPage() {
       logoUrl = await uploadSponsorLogo(logoFile, id);
     }
 
-    await supabaseAdmin
-      .from("sponsors")
-      .update({
-        name,
-        href: hrefRaw || null,
-        logo_url: logoUrl,
-        tier,
-        is_active: isActive,
-      })
-      .eq("id", id);
+    await pgQuery(
+      `
+        update sponsors
+        set name = $2, href = $3, logo_url = $4, tier = $5, is_active = $6
+        where id = $1
+      `,
+      [id, name, hrefRaw || null, logoUrl, tier, isActive]
+    );
 
     revalidatePath("/admin/sponsors");
     revalidatePath("/sponsors");
@@ -161,12 +251,10 @@ export default async function AdminSponsorsPage() {
     "use server";
 
     await requireAdmin();
-
     const id = String(formData.get("id") ?? "").trim();
     if (!id) return;
 
-    await supabaseAdmin.from("sponsors").delete().eq("id", id);
-
+    await pgQuery(`delete from sponsors where id = $1`, [id]);
     revalidatePath("/admin/sponsors");
     revalidatePath("/sponsors");
   }
@@ -175,7 +263,6 @@ export default async function AdminSponsorsPage() {
     "use server";
 
     const { user } = await requireAdmin();
-
     const id = String(formData.get("id") ?? "").trim();
     const role = String(formData.get("role") ?? "user").trim();
 
@@ -183,19 +270,11 @@ export default async function AdminSponsorsPage() {
     if (role !== "admin" && role !== "user" && role !== "sponsor") return;
     if (id === user.id && role !== "admin") return;
 
-    await supabaseAdmin.from("profiles").update({ role }).eq("id", id);
-
-    const { data: authUserData } = await supabaseAdmin.auth.admin.getUserById(id);
-    const appMetadata = { ...(authUserData.user?.app_metadata ?? {}), role };
-    await supabaseAdmin.auth.admin.updateUserById(id, { app_metadata: appMetadata });
+    await pgQuery(`update profiles set role = $2 where id = $1`, [id, role]);
 
     if (role === "sponsor") {
-      const username =
-        (users ?? []).find((u) => u.id === id)?.username ??
-        authUserData.user?.user_metadata?.username ??
-        authUserData.user?.email ??
-        null;
-      await ensureSponsorRecordForProfile({ userId: id, username: typeof username === "string" ? username : null });
+      const username = users.find((item) => item.id === id)?.username ?? null;
+      await ensureSponsorRecordForProfile({ userId: id, username });
       revalidatePath("/sponsors");
     }
 
@@ -203,13 +282,107 @@ export default async function AdminSponsorsPage() {
     revalidatePath("/admin/users");
   }
 
+  async function setRequestStatus(formData: FormData) {
+    "use server";
+
+    await requireAdmin();
+    const requestId = String(formData.get("request_id") ?? "").trim();
+    const status = String(formData.get("status") ?? "").trim();
+    if (!requestId) return;
+
+    await updateSponsorRequestStatus(requestId, status);
+    const requestItem = requests.find((item) => item.id === requestId);
+    if (requestItem && (status === "reviewed" || status === "rejected")) {
+      await createNotification({
+        userId: requestItem.user_id,
+        type: "sponsor_request_status",
+        title: status === "rejected" ? (isEn ? "Sponsor request rejected" : "Заявка на спонсорство отклонена") : (isEn ? "Sponsor request reviewed" : "Заявка на спонсорство просмотрена"),
+        body: isEn ? `Status: ${status}` : `Статус: ${status}`,
+        href: "/sponsors",
+      });
+    }
+    revalidatePath("/admin/sponsors");
+  }
+
+  async function approveRequest(formData: FormData) {
+    "use server";
+
+    await requireAdmin();
+    const requestId = String(formData.get("request_id") ?? "").trim();
+    const userId = String(formData.get("user_id") ?? "").trim();
+    const username = String(formData.get("username") ?? "").trim();
+    if (!requestId || !userId) return;
+
+    await pgQuery(`update profiles set role = 'sponsor' where id = $1`, [userId]);
+    await ensureSponsorRecordForProfile({ userId, username: username || null });
+    await updateSponsorRequestStatus(requestId, "approved");
+    await createNotification({
+      userId,
+      type: "sponsor_request_approved",
+      title: isEn ? "Sponsor request approved" : "Заявка на спонсорство одобрена",
+      body: isEn ? "Your account received sponsor role." : "Вашему аккаунту выдана роль sponsor.",
+      href: "/sponsors",
+    });
+    const email = await getUserEmail(userId);
+    if (email) {
+      await queueEmail({
+        toEmail: email,
+        subject: isEn ? "Sponsor request approved" : "Заявка на спонсорство одобрена",
+        textBody: isEn ? "Your sponsor request was approved and sponsor role was added to your account." : "Ваша заявка на спонсорство одобрена, роль sponsor добавлена в аккаунт.",
+        kind: "sponsor_request_approved",
+        userId,
+      });
+    }
+
+    revalidatePath("/admin/sponsors");
+    revalidatePath("/admin/users");
+    revalidatePath("/sponsors");
+  }
+
+  async function deleteRequest(formData: FormData) {
+    "use server";
+
+    await requireAdmin();
+    const requestId = String(formData.get("request_id") ?? "").trim();
+    if (!requestId) return;
+
+    await pgQuery(`delete from sponsor_requests where id = $1`, [requestId]);
+    revalidatePath("/admin/sponsors");
+  }
+
   return (
     <div className="space-y-6">
       <div className="rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6">
         <h2 className="text-xl font-bold">{isEn ? "Sponsors and roles" : "Спонсоры и роли"}</h2>
         <p className="mt-2 text-sm text-white/60">
-          {isEn ? "Manage sponsors table and assign sponsor role to users." : "Управление таблицей sponsors и выдача роли sponsor пользователям."}
+          {isEn ? "Manage sponsor requests, sponsors table and sponsor role assignment." : "Управление заявками на спонсорство, таблицей sponsors и выдачей роли sponsor пользователям."}
         </p>
+      </div>
+
+      <div className="rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-lg font-semibold">{isEn ? "Sponsor requests" : "Заявки на спонсорство"}</h3>
+          <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-1 text-xs text-white/70">
+            {isEn ? "Total" : "Всего"}: {requests.length}
+          </div>
+        </div>
+        <div className="mt-4 space-y-3">
+          {requests.map((item) => (
+            <RequestCard
+              key={item.id}
+              item={item}
+              locale={locale}
+              setRequestStatus={setRequestStatus}
+              approveRequest={approveRequest}
+              deleteRequest={deleteRequest}
+            />
+          ))}
+          {requests.length === 0 && (
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-white/60">
+              {isEn ? "No sponsor requests yet." : "Пока нет заявок на спонсорство."}
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6">
@@ -240,16 +413,10 @@ export default async function AdminSponsorsPage() {
         </form>
       </div>
 
-      {sponsorsError && (
-        <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">
-          {isEn ? "Failed to load sponsors" : "Ошибка загрузки спонсоров"}: {sponsorsError.message}
-        </div>
-      )}
-
       <div className="rounded-3xl border border-white/10 bg-white/5 p-3 sm:p-4">
         <h3 className="px-2 py-1 text-lg font-semibold">{isEn ? "Sponsors list" : "Список спонсоров"}</h3>
         <div className="mt-2 space-y-3">
-          {(sponsors ?? []).map((s) => (
+          {sponsors.map((s) => (
             <form key={s.id} action={updateSponsor} className="rounded-2xl border border-white/10 bg-black/20 p-4">
               <input type="hidden" name="id" value={s.id} />
               <input type="hidden" name="current_logo_url" value={s.logo_url ?? ""} />
@@ -289,7 +456,7 @@ export default async function AdminSponsorsPage() {
             </form>
           ))}
 
-          {(sponsors?.length ?? 0) === 0 && !sponsorsError && (
+          {sponsors.length === 0 && (
             <div className="rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-white/60">
               {isEn ? "No records in sponsors table yet." : "В таблице sponsors пока нет записей."}
             </div>
@@ -297,16 +464,10 @@ export default async function AdminSponsorsPage() {
         </div>
       </div>
 
-      {usersError && (
-        <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">
-          {isEn ? "Failed to load users" : "Ошибка загрузки пользователей"}: {usersError.message}
-        </div>
-      )}
-
       <div className="rounded-3xl border border-white/10 bg-white/5 p-3 sm:p-4">
         <h3 className="px-2 py-1 text-lg font-semibold">{isEn ? "Assign sponsor role" : "Выдать роль sponsor"}</h3>
         <div className="mt-2 space-y-3 sm:hidden">
-          {(users ?? []).map((u) => (
+          {users.map((u) => (
             <article key={u.id} className="rounded-2xl border border-white/10 bg-black/20 p-3">
               <div className="flex items-center justify-between gap-2">
                 <div className="min-w-0">
@@ -344,7 +505,7 @@ export default async function AdminSponsorsPage() {
               </div>
             </article>
           ))}
-          {(users?.length ?? 0) === 0 && !usersError && (
+          {users.length === 0 && (
             <div className="rounded-2xl border border-white/10 bg-black/20 p-3 text-sm text-white/60">
               {isEn ? "No users found." : "Пользователи не найдены."}
             </div>
@@ -361,7 +522,7 @@ export default async function AdminSponsorsPage() {
               </tr>
             </thead>
             <tbody>
-              {(users ?? []).map((u) => (
+              {users.map((u) => (
                 <tr key={u.id} className="border-t border-white/10">
                   <td className="px-3 py-2 font-mono text-xs text-white/70">{u.id.slice(0, 8)}...</td>
                   <td className="px-3 py-2">{u.username ?? "-"}</td>
@@ -397,7 +558,7 @@ export default async function AdminSponsorsPage() {
                   </td>
                 </tr>
               ))}
-              {(users?.length ?? 0) === 0 && !usersError && (
+              {users.length === 0 && (
                 <tr>
                   <td className="px-3 py-4 text-sm text-white/60" colSpan={4}>
                     {isEn ? "No users found." : "Пользователи не найдены."}

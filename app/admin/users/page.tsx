@@ -1,13 +1,16 @@
-﻿import { revalidatePath } from "next/cache";
+import Link from "next/link";
+import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/auth";
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { ensureProfilePayoutColumns } from "@/lib/profilePayouts";
 import { ensureSponsorRecordForProfile } from "@/lib/sponsorSync";
 import { getRequestLocale } from "@/lib/i18nServer";
+import { pgQuery, pgRows, withPgTransaction } from "@/lib/postgres";
 
 type UserRow = {
   id: string;
   username: string | null;
   role: string | null;
+  payout_iban: string | null;
   created_at: string | null;
   is_banned: boolean | null;
   banned_until: string | null;
@@ -38,44 +41,46 @@ function activeRestrictionLabel(
   return locale === "en" ? "Active" : "Активен";
 }
 
+async function tableExists(name: string, schema = "public") {
+  const rows = await pgRows<{ exists: boolean }>(
+    `
+      select to_regclass($1) is not null as exists
+    `,
+    [`${schema}.${name}`]
+  );
+  return Boolean(rows[0]?.exists);
+}
+
 export default async function AdminUsersPage() {
   const locale = await getRequestLocale();
   const isEn = locale === "en";
-  const { supabase, user } = await requireAdmin();
-
-  const { data: users, error } = await supabase
-    .from("profiles")
-    .select("id, username, role, created_at, is_banned, banned_until, restricted_until")
-    .order("created_at", { ascending: false })
-    .limit(200)
-    .returns<UserRow[]>();
+  const { user } = await requireAdmin();
+  await ensureProfilePayoutColumns();
+  const users = await pgRows<UserRow>(
+    `
+      select id, username, role, payout_iban, created_at, is_banned, banned_until, restricted_until
+      from profiles
+      order by created_at desc nulls last
+      limit 200
+    `
+  );
 
   async function setRole(formData: FormData) {
     "use server";
 
     const { user } = await requireAdmin();
-
     const id = String(formData.get("id") ?? "").trim();
     const role = String(formData.get("role") ?? "user").trim();
 
     if (!id) return;
     if (role !== "admin" && role !== "user" && role !== "sponsor") return;
-
     if (id === user.id && role !== "admin") return;
 
-    await supabaseAdmin.from("profiles").update({ role }).eq("id", id);
-
-    const { data: authUserData } = await supabaseAdmin.auth.admin.getUserById(id);
-    const appMetadata = { ...(authUserData.user?.app_metadata ?? {}), role };
-    await supabaseAdmin.auth.admin.updateUserById(id, { app_metadata: appMetadata });
+    await pgQuery(`update profiles set role = $2 where id = $1`, [id, role]);
 
     if (role === "sponsor") {
-      const username =
-        (users ?? []).find((u) => u.id === id)?.username ??
-        authUserData.user?.user_metadata?.username ??
-        authUserData.user?.email ??
-        null;
-      await ensureSponsorRecordForProfile({ userId: id, username: typeof username === "string" ? username : null });
+      const username = users.find((item) => item.id === id)?.username ?? null;
+      await ensureSponsorRecordForProfile({ userId: id, username });
       revalidatePath("/sponsors");
     }
 
@@ -92,18 +97,26 @@ export default async function AdminUsersPage() {
     if (!id || id === user.id) return;
 
     if (mode === "unban") {
-      await supabaseAdmin
-        .from("profiles")
-        .update({ is_banned: false, banned_until: null, restricted_until: null })
-        .eq("id", id);
+      await pgQuery(
+        `
+          update profiles
+          set is_banned = false, banned_until = null, restricted_until = null
+          where id = $1
+        `,
+        [id]
+      );
       revalidatePath("/admin/users");
       return;
     }
 
-    await supabaseAdmin
-      .from("profiles")
-      .update({ is_banned: true, banned_until: null, restricted_until: null })
-      .eq("id", id);
+    await pgQuery(
+      `
+        update profiles
+        set is_banned = true, banned_until = null, restricted_until = null
+        where id = $1
+      `,
+      [id]
+    );
 
     revalidatePath("/admin/users");
   }
@@ -120,7 +133,7 @@ export default async function AdminUsersPage() {
     if (!id || id === user.id) return;
 
     if (mode === "clear") {
-      await supabaseAdmin.from("profiles").update({ restricted_until: null }).eq("id", id);
+      await pgQuery(`update profiles set restricted_until = null where id = $1`, [id]);
       revalidatePath("/admin/users");
       return;
     }
@@ -133,12 +146,74 @@ export default async function AdminUsersPage() {
     if (unit === "days") ms = maxAmount * 24 * 60 * 60 * 1000;
 
     const restrictedUntil = new Date(Date.now() + ms).toISOString();
-    await supabaseAdmin
-      .from("profiles")
-      .update({ restricted_until: restrictedUntil, is_banned: false, banned_until: null })
-      .eq("id", id);
+    await pgQuery(
+      `
+        update profiles
+        set restricted_until = $2, is_banned = false, banned_until = null
+        where id = $1
+      `,
+      [id, restrictedUntil]
+    );
 
     revalidatePath("/admin/users");
+  }
+
+  async function deleteUser(formData: FormData) {
+    "use server";
+
+    const { user } = await requireAdmin();
+    const id = String(formData.get("id") ?? "").trim();
+
+    if (!id || id === user.id) return;
+
+    await withPgTransaction(async (client) => {
+      const optionalTables = {
+        support_threads: await tableExists("support_threads"),
+        support_tickets: await tableExists("support_tickets"),
+        support_messages: await tableExists("support_messages"),
+        team_members: await tableExists("team_members"),
+        teams: await tableExists("teams"),
+        registrations: await tableExists("registrations"),
+        tournament_results: await tableExists("tournament_results"),
+        prize_claims: await tableExists("prize_claims"),
+      };
+
+      await client.query(`delete from app_sessions where user_id = $1`, [id]);
+      await client.query(`delete from user_accounts where user_id = $1`, [id]);
+
+      if (optionalTables.support_messages) {
+        await client.query(`delete from support_messages where sender_id = $1`, [id]);
+      }
+      if (optionalTables.support_threads) {
+        await client.query(`delete from support_threads where user_id = $1`, [id]);
+      }
+      if (optionalTables.support_tickets) {
+        await client.query(`delete from support_tickets where user_id = $1`, [id]);
+      }
+      if (optionalTables.team_members) {
+        await client.query(`delete from team_members where user_id = $1`, [id]);
+      }
+      if (optionalTables.teams) {
+        await client.query(`delete from teams where captain_id = $1`, [id]);
+      }
+      if (optionalTables.registrations) {
+        await client.query(`delete from registrations where user_id = $1`, [id]);
+      }
+      if (optionalTables.tournament_results) {
+        await client.query(`delete from tournament_results where captain_user_id = $1`, [id]);
+      }
+      if (optionalTables.prize_claims) {
+        await client.query(`delete from prize_claims where winner_user_id = $1`, [id]);
+      }
+      await client.query(`delete from profiles where id = $1`, [id]);
+    });
+
+    revalidatePath("/admin/users");
+    revalidatePath("/admin/support");
+    revalidatePath("/support");
+    revalidatePath("/profile");
+    revalidatePath("/sponsors");
+    revalidatePath("/tournaments");
   }
 
   return (
@@ -147,18 +222,14 @@ export default async function AdminUsersPage() {
         <h2 className="text-xl font-bold">{isEn ? "Users and roles" : "Пользователи и роли"}</h2>
         <p className="mt-2 text-sm text-white/60">
           {isEn
-            ? "Manage user roles and moderation: ban or temporary restrictions."
-            : "Управление ролями пользователей и модерацией: бан и временные ограничения."}
+            ? "Manage user roles and moderation: ban, temporary restrictions, and account deletion."
+            : "Управление ролями пользователей и модерацией: бан, временные ограничения и удаление аккаунта."}
         </p>
       </div>
 
-      {error && (
-        <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">{isEn ? "Failed to load users" : "Ошибка загрузки пользователей"}: {error.message}</div>
-      )}
-
       <div className="rounded-3xl border border-white/10 bg-white/5 p-3 sm:p-4">
         <div className="space-y-3 sm:hidden">
-          {(users ?? []).map((u) => (
+          {users.map((u) => (
             <article key={u.id} className="rounded-2xl border border-white/10 bg-black/20 p-3">
               <div className="flex items-center justify-between gap-2">
                 <div className="min-w-0">
@@ -168,6 +239,7 @@ export default async function AdminUsersPage() {
                 <div className="rounded-lg border border-white/15 bg-black/25 px-2 py-1 text-xs">{u.role ?? "user"}</div>
               </div>
               <div className="mt-2 text-xs text-white/60">{isEn ? "Created" : "Создан"}: {toDate(u.created_at, locale)}</div>
+              <div className="mt-2 text-xs text-white/60">IBAN: {u.payout_iban ?? "-"}</div>
               <div className="mt-1 text-xs text-white/70">
                 {isEn ? "Status" : "Статус"}: {activeRestrictionLabel(u, locale)}
                 {u.restricted_until ? ` • ${isEn ? "Until" : "До"} ${toDate(u.restricted_until, locale)}` : ""}
@@ -233,10 +305,23 @@ export default async function AdminUsersPage() {
                     {isEn ? "clear" : "снять"}
                   </button>
                 </form>
+                <form action={deleteUser}>
+                  <input type="hidden" name="id" value={u.id} />
+                  <button
+                    type="submit"
+                    disabled={u.id === user.id}
+                    className="rounded-lg border border-red-500/45 bg-red-600/15 px-2.5 py-1 text-xs text-red-100 hover:bg-red-600/25 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isEn ? "delete" : "удалить"}
+                  </button>
+                </form>
+                <Link href={`/admin/users/${u.id}`} className="rounded-lg border border-white/20 bg-black/20 px-2.5 py-1 text-xs hover:bg-white/5">
+                  {isEn ? "view" : "профиль"}
+                </Link>
               </div>
             </article>
           ))}
-          {(users?.length ?? 0) === 0 && !error && (
+          {users.length === 0 && (
             <div className="rounded-2xl border border-white/10 bg-black/20 p-3 text-sm text-white/60">
               {isEn ? "No users found." : "Пользователи не найдены."}
             </div>
@@ -248,6 +333,7 @@ export default async function AdminUsersPage() {
             <thead className="text-white/50">
               <tr>
                 <th className="px-3 py-2">ID</th>
+                <th className="px-3 py-2">IBAN</th>
                 <th className="px-3 py-2">{isEn ? "Username" : "Ник"}</th>
                 <th className="px-3 py-2">{isEn ? "Role" : "Роль"}</th>
                 <th className="px-3 py-2">{isEn ? "Status" : "Статус"}</th>
@@ -256,9 +342,10 @@ export default async function AdminUsersPage() {
               </tr>
             </thead>
             <tbody>
-              {(users ?? []).map((u) => (
+              {users.map((u) => (
                 <tr key={u.id} className="border-t border-white/10">
                   <td className="px-3 py-2 font-mono text-xs text-white/70">{u.id.slice(0, 8)}...</td>
+                  <td className="px-3 py-2 font-mono text-xs text-white/70">{u.payout_iban ?? "-"}</td>
                   <td className="px-3 py-2">{u.username ?? "-"}</td>
                   <td className="px-3 py-2">{u.role ?? "user"}</td>
                   <td className="px-3 py-2 text-xs text-white/80">
@@ -333,14 +420,28 @@ export default async function AdminUsersPage() {
                           {isEn ? "clear" : "снять"}
                         </button>
                       </form>
+
+                      <form action={deleteUser}>
+                        <input type="hidden" name="id" value={u.id} />
+                        <button
+                          type="submit"
+                          disabled={u.id === user.id}
+                          className="rounded-lg border border-red-500/45 bg-red-600/15 px-3 py-1 text-xs text-red-100 hover:bg-red-600/25 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {isEn ? "delete" : "удалить"}
+                        </button>
+                      </form>
+                      <Link href={`/admin/users/${u.id}`} className="rounded-lg border border-white/20 bg-black/20 px-3 py-1 text-xs hover:bg-white/5">
+                        {isEn ? "view" : "профиль"}
+                      </Link>
                     </div>
                   </td>
                 </tr>
               ))}
 
-              {(users?.length ?? 0) === 0 && !error && (
+              {users.length === 0 && (
                 <tr>
-                  <td className="px-3 py-4 text-sm text-white/60" colSpan={6}>
+                  <td className="px-3 py-4 text-sm text-white/60" colSpan={7}>
                     {isEn ? "No users found." : "Пользователи не найдены."}
                   </td>
                 </tr>

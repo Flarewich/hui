@@ -1,4 +1,4 @@
-﻿import Link from "next/link";
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import Markdown from "@/components/Markdown";
 import TournamentParticipantsTable from "@/components/TournamentParticipantsTable";
@@ -6,16 +6,18 @@ import TournamentRegistrationModal from "@/components/TournamentRegistrationModa
 import TeamSizeLive from "@/components/TeamSizeLive";
 import { getSitePage } from "@/lib/pages";
 import { getTournamentRegistrationRows } from "@/lib/registrationTable";
-import { createSupabaseServerClient } from "@/lib/supabaseServer";
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { getGameTournamentSettings, getTeamSizeLimit, getTournamentCapacity, isStartingInFiveMinutes } from "@/lib/tournamentLimits";
 import { getRequestLocale } from "@/lib/i18nServer";
+import { getCurrentSession } from "@/lib/sessionAuth";
+import { pgMaybeOne, pgRows } from "@/lib/postgres";
+import { formatEuro } from "@/lib/currency";
 
 type Tournament = {
   id: string;
   title: string;
   status: "upcoming" | "live" | "finished" | string;
   mode: "solo" | "duo" | "squad" | string;
+  max_teams: number | null;
   start_at: string;
   prize_pool: number | null;
   game_id: string | null;
@@ -36,6 +38,12 @@ type BracketMatch = {
 type BracketRound = {
   title: string;
   matches: BracketMatch[];
+};
+
+type TournamentResultRow = {
+  place: number;
+  prize_amount: number;
+  teams: { name?: string | null } | null;
 };
 
 function toDate(ts: string, locale: "ru" | "en") {
@@ -174,59 +182,112 @@ export default async function TournamentDetailPage({
   const sp = await searchParams;
   const locale = await getRequestLocale();
   const isEn = locale === "en";
-  const supabase = await createSupabaseServerClient();
 
-  const [tournamentResult, rulesPage, authResult] = await Promise.all([
-    supabase
-      .from("tournaments")
-      .select("id, title, status, mode, start_at, prize_pool, game_id, games(id, name, slug)")
-      .eq("id", id)
-      .maybeSingle<Tournament>(),
+  const [tournament, rulesPage, session] = await Promise.all([
+    pgMaybeOne<Tournament>(
+      `
+        select
+          t.id,
+          t.title,
+          t.status,
+          t.mode,
+          t.max_teams,
+          t.start_at,
+          t.prize_pool,
+          t.game_id,
+          json_build_object('id', g.id, 'name', g.name, 'slug', g.slug) as games
+        from tournaments t
+        left join games g on g.id = t.game_id
+        where t.id = $1
+        limit 1
+      `,
+      [id]
+    ),
     getSitePage("rules", locale).catch(() => null),
-    supabase.auth.getUser(),
+    getCurrentSession(),
   ]);
 
-  const tournament = tournamentResult.data;
   if (!tournament) notFound();
 
-  const [relatedResult, registrationCountResult, initialRegistrationRows] = await Promise.all([
-    supabase
-      .from("tournaments")
-      .select("id, title, start_at, prize_pool, mode")
-      .eq("status", "upcoming")
-      .eq("game_id", tournament.game_id)
-      .neq("id", tournament.id)
-      .order("start_at", { ascending: true })
-      .limit(3),
-    supabaseAdmin.from("registrations").select("id", { count: "exact", head: true }).eq("tournament_id", id),
+  const [related, registrationCountRow, initialRegistrationRows, tournamentResults] = await Promise.all([
+    pgRows<Array<{ id: string; title: string; start_at: string; prize_pool: number | null; mode: string }>[number]>(
+      `
+        select id, title, start_at, prize_pool, mode
+        from tournaments
+        where status = 'upcoming' and game_id is not distinct from $1 and id <> $2
+        order by start_at asc
+        limit 3
+      `,
+      [tournament.game_id, tournament.id]
+    ),
+    pgMaybeOne<{ count: string }>(
+      `
+        select count(distinct coalesce(team_id, user_id))::text as count
+        from registrations
+        where tournament_id = $1
+      `,
+      [id]
+    ),
     getTournamentRegistrationRows(id),
+    pgRows<TournamentResultRow>(
+      `
+        select
+          tr.place,
+          tr.prize_amount,
+          json_build_object('name', tm.name) as teams
+        from tournament_results tr
+        left join teams tm on tm.id = tr.team_id
+        where tr.tournament_id = $1
+        order by tr.place asc
+      `,
+      [id]
+    ),
   ]);
 
-  const related = relatedResult.data;
   const dynamicStatus = effectiveStatus(tournament.status, tournament.start_at);
   const status = statusMeta(dynamicStatus, locale);
-  const user = authResult.data.user;
+  const user = session?.user ?? null;
 
   const myRegistration = user
-    ? await supabaseAdmin.from("registrations").select("id, created_at, team_id, teams(name)").eq("tournament_id", id).eq("user_id", user.id).maybeSingle()
+    ? await pgMaybeOne<{ id: string; created_at: string; team_id: string | null; team_name: string | null }>(
+        `
+          select r.id, r.created_at, r.team_id, tm.name as team_name
+          from registrations r
+          left join teams tm on tm.id = r.team_id
+          where r.tournament_id = $1 and r.user_id = $2
+          limit 1
+        `,
+        [id, user.id]
+      )
     : null;
 
-  const isRegistered = !!myRegistration?.data?.id;
-  const registrationDate = myRegistration?.data?.created_at ?? null;
-  const myTeamName =
-    myRegistration?.data && "teams" in myRegistration.data && typeof myRegistration.data.teams === "object" && myRegistration.data.teams && "name" in myRegistration.data.teams
-      ? String(myRegistration.data.teams.name ?? "")
-      : "";
-  const myTeamId = myRegistration?.data && "team_id" in myRegistration.data && myRegistration.data.team_id ? String(myRegistration.data.team_id) : null;
+  const isRegistered = !!myRegistration?.id;
+  const registrationDate = myRegistration?.created_at ?? null;
+  const myTeamName = String(myRegistration?.team_name ?? "");
+  const myTeamId = myRegistration?.team_id ? String(myRegistration.team_id) : null;
 
-  const myTeamMembersCountResult = myTeamId ? await supabaseAdmin.from("team_members").select("id", { count: "exact", head: true }).eq("team_id", myTeamId) : null;
-  const myTeamMembersCount = myTeamMembersCountResult?.count ?? 0;
+  const myTeamMembersCountResult = myTeamId
+    ? await pgMaybeOne<{ count: string }>(
+        `
+          select count(*)::text as count
+          from team_members
+          where team_id = $1
+        `,
+        [myTeamId]
+      )
+    : null;
+  const myTeamMembersCount = Number(myTeamMembersCountResult?.count ?? 0);
   const teamLimit = getTeamSizeLimit(tournament.mode, tournament.games?.slug ?? null, tournament.games?.name ?? null);
   const gameSettings = getGameTournamentSettings(tournament.games?.slug ?? null, tournament.games?.name ?? null);
 
   const isClosed = dynamicStatus !== "upcoming";
-  const capacity = getTournamentCapacity(tournament.mode, tournament.games?.slug ?? null, tournament.games?.name ?? null);
-  const currentRegistrations = registrationCountResult.count ?? 0;
+  const capacity = getTournamentCapacity(
+    tournament.mode,
+    tournament.games?.slug ?? null,
+    tournament.games?.name ?? null,
+    tournament.max_teams
+  );
+  const currentRegistrations = Number(registrationCountRow?.count ?? 0);
   const isFull = currentRegistrations >= capacity;
   const startsInFiveMinutes = isStartingInFiveMinutes(tournament.start_at);
   const needsTeam = tournament.mode === "duo" || tournament.mode === "squad";
@@ -237,18 +298,21 @@ export default async function TournamentDetailPage({
 
   const bracketTeams: BracketTeam[] = shouldShowBracket
     ? await (async () => {
-        const { data } = await supabaseAdmin
-          .from("registrations")
-          .select("team_id, teams(name)")
-          .eq("tournament_id", id)
-          .not("team_id", "is", null)
-          .returns<Array<{ team_id: string | null; teams: { name?: string | null } | null }>>();
+        const data = await pgRows<Array<{ team_id: string | null; team_name: string | null }>[number]>(
+          `
+            select r.team_id, tm.name as team_name
+            from registrations r
+            left join teams tm on tm.id = r.team_id
+            where r.tournament_id = $1 and r.team_id is not null
+          `,
+          [id]
+        );
 
         const unique = new Map<string, BracketTeam>();
-        for (const row of data ?? []) {
+        for (const row of data) {
           const teamId = String(row.team_id ?? "").trim();
           if (!teamId || unique.has(teamId)) continue;
-          const teamName = String(row.teams?.name ?? "").trim() || (isEn ? `Team ${unique.size + 1}` : `Команда ${unique.size + 1}`);
+          const teamName = String(row.team_name ?? "").trim() || (isEn ? `Team ${unique.size + 1}` : `Команда ${unique.size + 1}`);
           unique.set(teamId, { id: teamId, name: teamName });
         }
 
@@ -273,7 +337,7 @@ export default async function TournamentDetailPage({
             <div className="mt-4 grid gap-2 text-sm text-white/80 md:grid-cols-2">
               <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">{isEn ? "Start" : "Старт"}: {toDate(tournament.start_at, locale)}</div>
               <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
-                {isEn ? "Prize pool" : "Призовой фонд"}: {Number(tournament.prize_pool ?? 0).toLocaleString(locale === "en" ? "en-US" : "ru-RU")} RUB
+                {isEn ? "Prize pool" : "Призовой фонд"}: {formatEuro(tournament.prize_pool, locale)}
               </div>
             </div>
           </div>
@@ -356,6 +420,21 @@ export default async function TournamentDetailPage({
 
       <TournamentParticipantsTable tournamentId={id} initialRows={initialRegistrationRows} locale={locale} />
 
+      {tournamentResults.length > 0 && (
+        <section className="rounded-3xl border border-white/10 bg-white/5 p-4 md:p-6">
+          <h2 className="text-xl font-bold">{isEn ? "Final results" : "Итоги турнира"}</h2>
+          <div className="mt-3 grid gap-2 sm:grid-cols-3">
+            {tournamentResults.map((row) => (
+              <div key={`res-${row.place}`} className="rounded-2xl border border-white/10 bg-black/20 p-3 text-sm">
+                <div className="text-xs text-white/60">{row.place} {isEn ? "place" : "место"}</div>
+                <div className="mt-1 font-semibold">{row.teams?.name ?? (isEn ? "Team" : "Команда")}</div>
+                <div className="mt-1 text-cyan-200">{formatEuro(row.prize_amount, locale)}</div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       {shouldShowBracket && (
         <section className="rounded-3xl border border-cyan-400/30 bg-white/5 p-4 md:p-6">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -419,14 +498,14 @@ export default async function TournamentDetailPage({
           <div className="rounded-3xl border border-white/10 bg-white/5 p-4 md:p-6">
             <h3 className="text-lg font-semibold">{isEn ? "Related tournaments" : "Связанные турниры"}</h3>
             <div className="mt-4 space-y-3">
-              {(related ?? []).map((t) => (
+              {related.map((t) => (
                 <Link key={t.id} href={`/tournaments/${t.id}`} className="block rounded-2xl border border-white/10 bg-black/20 p-3 hover:bg-white/5">
                   <div className="text-xs text-white/60">{toDate(t.start_at, locale)} • {String(t.mode).toUpperCase()}</div>
                   <div className="mt-1 text-sm font-semibold">{t.title}</div>
-                  <div className="mt-1 text-xs text-cyan-200">{Number(t.prize_pool ?? 0).toLocaleString(locale === "en" ? "en-US" : "ru-RU")} RUB</div>
+                  <div className="mt-1 text-xs text-cyan-200">{formatEuro(t.prize_pool, locale)}</div>
                 </Link>
               ))}
-              {(related?.length ?? 0) === 0 && <div className="rounded-2xl border border-white/10 bg-black/20 p-3 text-sm text-white/60">{isEn ? "No related tournaments yet." : "Пока нет других турниров по этой игре."}</div>}
+              {related.length === 0 && <div className="rounded-2xl border border-white/10 bg-black/20 p-3 text-sm text-white/60">{isEn ? "No related tournaments yet." : "Пока нет других турниров по этой игре."}</div>}
             </div>
           </div>
 
@@ -461,5 +540,3 @@ export default async function TournamentDetailPage({
     </div>
   );
 }
-
-

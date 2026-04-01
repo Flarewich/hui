@@ -5,6 +5,8 @@ import { defaultSitePages } from "@/lib/defaultSitePages";
 import { getRequestLocale } from "@/lib/i18nServer";
 import { ensureDefaultGames } from "@/lib/defaultGames";
 import { getGameTournamentSettings } from "@/lib/tournamentLimits";
+import { pgMaybeOne, pgQuery, pgRows } from "@/lib/postgres";
+import { formatEuro } from "@/lib/currency";
 
 
 type Game = {
@@ -22,6 +24,7 @@ type Tournament = {
   title: string;
   status: string;
   mode: string;
+  max_teams: number | null;
   start_at: string;
   prize_pool: number | null;
   game_id: string | null;
@@ -46,6 +49,40 @@ type ScheduleItem = {
   stream_url: string | null;
 };
 
+type TournamentRegistration = {
+  tournament_id: string;
+  user_id: string;
+  team_id: string | null;
+  profiles: { username: string | null } | null;
+  teams: { name: string | null; captain_id?: string | null } | null;
+};
+
+type TournamentResult = {
+  id: string;
+  tournament_id: string;
+  place: number;
+  team_id: string | null;
+  captain_user_id: string;
+  prize_amount: number;
+};
+
+type PrizeClaim = {
+  id: string;
+  tournament_id: string;
+  place: number;
+  team_id: string | null;
+  winner_user_id: string;
+  amount: number;
+  status: "awaiting_details" | "pending_review" | "approved" | "rejected" | "paid" | "cancelled" | string;
+  payout_method: string | null;
+  recipient_name: string | null;
+  payment_details: string | null;
+  request_comment: string | null;
+  submitted_at: string | null;
+  reviewed_at: string | null;
+  paid_at: string | null;
+};
+
 function toInputDateTime(ts: string) {
   const d = new Date(ts);
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -62,19 +99,19 @@ function normalizeTournamentStatus(status: string, startAtIso: string, liveToken
   return "upcoming";
 }
 
-async function resolveModeByGame(
-  supabase: Awaited<ReturnType<typeof requireAdmin>>["supabase"],
-  gameId: string,
-  modeRaw: string
-) {
+async function resolveModeByGame(gameId: string, modeRaw: string) {
   const mode = (modeRaw || "solo").trim();
   if (!gameId) return mode;
 
-  const { data: game } = await supabase
-    .from("games")
-    .select("slug, name")
-    .eq("id", gameId)
-    .maybeSingle<{ slug?: string | null; name?: string | null }>();
+  const game = await pgMaybeOne<{ slug?: string | null; name?: string | null }>(
+    `
+      select slug, name
+      from games
+      where id = $1
+      limit 1
+    `,
+    [gameId]
+  );
 
   const settings = getGameTournamentSettings(game?.slug ?? null, game?.name ?? null);
   if (settings.team_size <= 1) return "solo";
@@ -85,41 +122,125 @@ async function resolveModeByGame(
 export default async function AdminTournamentsPage() {
   const locale = await getRequestLocale();
   const isEn = locale === "en";
-  const { supabase } = await requireAdmin();
+  await requireAdmin();
   await ensureDefaultGames();
 
-  const [{ data: tournaments }, { data: games }, { data: contentPages }, { data: scheduleItems }] = await Promise.all([
-    supabase
-      .from("tournaments")
-      .select("id, title, status, mode, start_at, prize_pool, game_id, room_code, room_password, room_instructions")
-      .order("start_at", { ascending: true })
-      .returns<Tournament[]>(),
-    supabase.from("games").select("id, name, is_active").order("name").returns<Game[]>(),
-    supabase
-      .from("site_pages")
-      .select("slug, title, content_md")
-      .in("slug", ["rules", "tournaments-info"])
-      .returns<SitePage[]>(),
-    supabase
-      .from("tournament_schedule")
-      .select("id, tournament_id, stage, match_title, start_at, end_at, stream_url")
-      .order("start_at", { ascending: true })
-      .returns<ScheduleItem[]>(),
+  const [tournaments, games, contentPages, scheduleItems] = await Promise.all([
+    pgRows<Tournament>(
+      `
+        select id, title, status, mode, max_teams, start_at, prize_pool, game_id, room_code, room_password, room_instructions
+        from tournaments
+        order by start_at asc
+      `
+    ),
+    pgRows<Game>(
+      `
+        select id, name, is_active
+        from games
+        order by name
+      `
+    ),
+    pgRows<SitePage>(
+      `
+        select slug, title, content_md
+        from site_pages
+        where slug = any($1::text[])
+      `,
+      [["rules", "tournaments-info"]]
+    ),
+    pgRows<ScheduleItem>(
+      `
+        select id, tournament_id, stage, match_title, start_at, end_at, stream_url
+        from tournament_schedule
+        order by start_at asc
+      `
+    ),
   ]);
 
-  const pages = new Map((contentPages ?? []).map((p) => [p.slug, p]));
+  const pages = new Map(contentPages.map((p) => [p.slug, p]));
   const liveToken: "live" | "current" =
-    (tournaments ?? []).some((t) => String(t.status ?? "").trim().toLowerCase() === "current")
+    tournaments.some((t) => String(t.status ?? "").trim().toLowerCase() === "current")
       ? "current"
       : "live";
-  const uniqueGames = Array.from(
-    new Map((games ?? []).map((g) => [gameKey(g), g])).values()
-  );
+  const uniqueGames = Array.from(new Map(games.map((g) => [gameKey(g), g])).values());
+  const tournamentIds = tournaments.map((t) => t.id);
+
+  const [registrations, tournamentResults, prizeClaims] =
+    tournamentIds.length > 0
+      ? await Promise.all([
+          pgRows<TournamentRegistration>(
+            `
+              select
+                r.tournament_id,
+                r.user_id,
+                r.team_id,
+                json_build_object('username', p.username) as profiles,
+                json_build_object('name', tm.name, 'captain_id', tm.captain_id) as teams
+              from registrations r
+              left join profiles p on p.id = r.user_id
+              left join teams tm on tm.id = r.team_id
+              where r.tournament_id = any($1::uuid[])
+            `,
+            [tournamentIds]
+          ),
+          pgRows<TournamentResult>(
+            `
+              select id, tournament_id, place, team_id, captain_user_id, prize_amount
+              from tournament_results
+              where tournament_id = any($1::uuid[])
+            `,
+            [tournamentIds]
+          ),
+          pgRows<PrizeClaim>(
+            `
+              select
+                id,
+                tournament_id,
+                place,
+                team_id,
+                winner_user_id,
+                amount,
+                status,
+                payout_method,
+                recipient_name,
+                payment_details,
+                request_comment,
+                submitted_at,
+                reviewed_at,
+                paid_at
+              from prize_claims
+              where tournament_id = any($1::uuid[])
+            `,
+            [tournamentIds]
+          ),
+        ])
+      : [[], [], []];
+
+  const registrationsByTournament = new Map<string, TournamentRegistration[]>();
+  for (const row of registrations) {
+    const list = registrationsByTournament.get(row.tournament_id) ?? [];
+    list.push(row);
+    registrationsByTournament.set(row.tournament_id, list);
+  }
+
+  const resultsByTournament = new Map<string, TournamentResult[]>();
+  for (const row of tournamentResults) {
+    const list = resultsByTournament.get(row.tournament_id) ?? [];
+    list.push(row);
+    resultsByTournament.set(row.tournament_id, list);
+  }
+
+  const claimsByTournament = new Map<string, PrizeClaim[]>();
+  for (const claim of prizeClaims) {
+    const list = claimsByTournament.get(claim.tournament_id) ?? [];
+    list.push(claim);
+    claimsByTournament.set(claim.tournament_id, list);
+  }
 
   async function createTournament(formData: FormData) {
     "use server";
 
-    const { supabase } = await requireAdmin();
+    await requireAdmin();
 
     const title = String(formData.get("title") ?? "").trim();
     const game_id = String(formData.get("game_id") ?? "").trim();
@@ -127,25 +248,38 @@ export default async function AdminTournamentsPage() {
     const modeRaw = String(formData.get("mode") ?? "solo").trim();
     const start_at = String(formData.get("start_at") ?? "").trim();
     const prize_pool = Number(formData.get("prize_pool") ?? 0);
+    const maxTeamsRaw = String(formData.get("max_teams") ?? "").trim();
+    const maxTeamsParsed = Number(maxTeamsRaw);
+    const max_teams =
+      maxTeamsRaw.length > 0 && Number.isFinite(maxTeamsParsed) && maxTeamsParsed > 0
+        ? Math.floor(maxTeamsParsed)
+        : null;
     const room_code = String(formData.get("room_code") ?? "").trim();
     const room_password = String(formData.get("room_password") ?? "").trim();
     const room_instructions = String(formData.get("room_instructions") ?? "").trim();
 
     if (!title || !start_at) return;
 
-    const mode = await resolveModeByGame(supabase, game_id, modeRaw);
+    const mode = await resolveModeByGame(game_id, modeRaw);
 
-    await supabase.from("tournaments").insert({
-      title,
-      game_id: game_id || null,
-      status: statusRaw,
-      mode,
-      start_at: new Date(start_at).toISOString(),
-      prize_pool: Number.isFinite(prize_pool) ? prize_pool : 0,
-      room_code: room_code || null,
-      room_password: room_password || null,
-      room_instructions: room_instructions || null,
-    });
+    await pgQuery(
+      `
+        insert into tournaments (title, game_id, status, mode, start_at, prize_pool, max_teams, room_code, room_password, room_instructions)
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      `,
+      [
+        title,
+        game_id || null,
+        statusRaw,
+        mode,
+        new Date(start_at).toISOString(),
+        Number.isFinite(prize_pool) ? prize_pool : 0,
+        max_teams,
+        room_code || null,
+        room_password || null,
+        room_instructions || null,
+      ]
+    );
 
     revalidatePath("/admin/tournaments");
     revalidatePath("/tournaments");
@@ -155,7 +289,7 @@ export default async function AdminTournamentsPage() {
   async function updateTournament(formData: FormData) {
     "use server";
 
-    const { supabase } = await requireAdmin();
+    await requireAdmin();
 
     const id = String(formData.get("id") ?? "").trim();
     if (!id) return;
@@ -166,26 +300,48 @@ export default async function AdminTournamentsPage() {
     const modeRaw = String(formData.get("mode") ?? "solo").trim();
     const start_at = String(formData.get("start_at") ?? "").trim();
     const prize_pool = Number(formData.get("prize_pool") ?? 0);
+    const maxTeamsRaw = String(formData.get("max_teams") ?? "").trim();
+    const maxTeamsParsed = Number(maxTeamsRaw);
+    const max_teams =
+      maxTeamsRaw.length > 0 && Number.isFinite(maxTeamsParsed) && maxTeamsParsed > 0
+        ? Math.floor(maxTeamsParsed)
+        : null;
     const room_code = String(formData.get("room_code") ?? "").trim();
     const room_password = String(formData.get("room_password") ?? "").trim();
     const room_instructions = String(formData.get("room_instructions") ?? "").trim();
 
-    const mode = await resolveModeByGame(supabase, game_id, modeRaw);
+    const mode = await resolveModeByGame(game_id, modeRaw);
 
-    await supabase
-      .from("tournaments")
-      .update({
+    await pgQuery(
+      `
+        update tournaments
+        set
+          title = $2,
+          game_id = $3,
+          status = $4,
+          mode = $5,
+          start_at = $6,
+          prize_pool = $7,
+          max_teams = $8,
+          room_code = $9,
+          room_password = $10,
+          room_instructions = $11
+        where id = $1
+      `,
+      [
+        id,
         title,
-        game_id: game_id || null,
-        status: statusRaw,
+        game_id || null,
+        statusRaw,
         mode,
-        start_at: start_at ? new Date(start_at).toISOString() : null,
-        prize_pool: Number.isFinite(prize_pool) ? prize_pool : 0,
-        room_code: room_code || null,
-        room_password: room_password || null,
-        room_instructions: room_instructions || null,
-      })
-      .eq("id", id);
+        start_at ? new Date(start_at).toISOString() : null,
+        Number.isFinite(prize_pool) ? prize_pool : 0,
+        max_teams,
+        room_code || null,
+        room_password || null,
+        room_instructions || null,
+      ]
+    );
 
     revalidatePath("/admin/tournaments");
     revalidatePath("/tournaments");
@@ -195,12 +351,12 @@ export default async function AdminTournamentsPage() {
   async function deleteTournament(formData: FormData) {
     "use server";
 
-    const { supabase } = await requireAdmin();
+    await requireAdmin();
 
     const id = String(formData.get("id") ?? "").trim();
     if (!id) return;
 
-    await supabase.from("tournaments").delete().eq("id", id);
+    await pgQuery(`delete from tournaments where id = $1`, [id]);
 
     revalidatePath("/admin/tournaments");
     revalidatePath("/tournaments");
@@ -209,7 +365,7 @@ export default async function AdminTournamentsPage() {
   async function savePage(formData: FormData) {
     "use server";
 
-    const { supabase } = await requireAdmin();
+    await requireAdmin();
 
     const slug = String(formData.get("slug") ?? "").trim();
     const title = String(formData.get("title") ?? "").trim();
@@ -217,9 +373,17 @@ export default async function AdminTournamentsPage() {
 
     if (!slug) return;
 
-    await supabase
-      .from("site_pages")
-      .upsert({ slug, title, content_md, updated_at: new Date().toISOString() }, { onConflict: "slug" });
+    await pgQuery(
+      `
+        insert into site_pages (slug, title, content_md, updated_at)
+        values ($1, $2, $3, now())
+        on conflict (slug) do update
+        set title = excluded.title,
+            content_md = excluded.content_md,
+            updated_at = now()
+      `,
+      [slug, title, content_md]
+    );
 
     revalidatePath("/admin/tournaments");
     revalidatePath("/tournaments");
@@ -228,7 +392,7 @@ export default async function AdminTournamentsPage() {
   async function createScheduleItem(formData: FormData) {
     "use server";
 
-    const { supabase } = await requireAdmin();
+    await requireAdmin();
 
     const tournament_id = String(formData.get("tournament_id") ?? "").trim();
     const stage = String(formData.get("stage") ?? "group").trim();
@@ -239,14 +403,20 @@ export default async function AdminTournamentsPage() {
 
     if (!tournament_id || !match_title || !start_at) return;
 
-    await supabase.from("tournament_schedule").insert({
-      tournament_id,
-      stage,
-      match_title,
-      start_at: new Date(start_at).toISOString(),
-      end_at: end_at ? new Date(end_at).toISOString() : null,
-      stream_url: stream_url || null,
-    });
+    await pgQuery(
+      `
+        insert into tournament_schedule (tournament_id, stage, match_title, start_at, end_at, stream_url)
+        values ($1, $2, $3, $4, $5, $6)
+      `,
+      [
+        tournament_id,
+        stage,
+        match_title,
+        new Date(start_at).toISOString(),
+        end_at ? new Date(end_at).toISOString() : null,
+        stream_url || null,
+      ]
+    );
 
     revalidatePath("/admin/tournaments");
     revalidatePath("/tournaments");
@@ -255,7 +425,7 @@ export default async function AdminTournamentsPage() {
   async function updateScheduleItem(formData: FormData) {
     "use server";
 
-    const { supabase } = await requireAdmin();
+    await requireAdmin();
 
     const id = String(formData.get("id") ?? "").trim();
     const tournament_id = String(formData.get("tournament_id") ?? "").trim();
@@ -267,18 +437,29 @@ export default async function AdminTournamentsPage() {
 
     if (!id || !tournament_id || !match_title || !start_at) return;
 
-    await supabase
-      .from("tournament_schedule")
-      .update({
+    await pgQuery(
+      `
+        update tournament_schedule
+        set
+          tournament_id = $2,
+          stage = $3,
+          match_title = $4,
+          start_at = $5,
+          end_at = $6,
+          stream_url = $7,
+          updated_at = now()
+        where id = $1
+      `,
+      [
+        id,
         tournament_id,
         stage,
         match_title,
-        start_at: new Date(start_at).toISOString(),
-        end_at: end_at ? new Date(end_at).toISOString() : null,
-        stream_url: stream_url || null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", id);
+        new Date(start_at).toISOString(),
+        end_at ? new Date(end_at).toISOString() : null,
+        stream_url || null,
+      ]
+    );
 
     revalidatePath("/admin/tournaments");
     revalidatePath("/tournaments");
@@ -287,14 +468,134 @@ export default async function AdminTournamentsPage() {
   async function deleteScheduleItem(formData: FormData) {
     "use server";
 
-    const { supabase } = await requireAdmin();
+    await requireAdmin();
     const id = String(formData.get("id") ?? "").trim();
     if (!id) return;
 
-    await supabase.from("tournament_schedule").delete().eq("id", id);
+    await pgQuery(`delete from tournament_schedule where id = $1`, [id]);
 
     revalidatePath("/admin/tournaments");
     revalidatePath("/tournaments");
+  }
+
+  async function saveTournamentResults(formData: FormData) {
+    "use server";
+
+    const tournamentId = String(formData.get("tournament_id") ?? "").trim();
+    if (!tournamentId) return;
+
+    await requireAdmin();
+
+    const p1TeamId = String(formData.get("place_1_team_id") ?? "").trim();
+    const p2TeamId = String(formData.get("place_2_team_id") ?? "").trim();
+    const p3TeamId = String(formData.get("place_3_team_id") ?? "").trim();
+    const p1Amount = Math.max(0, Number(formData.get("place_1_amount") ?? 0) || 0);
+    const p2Amount = Math.max(0, Number(formData.get("place_2_amount") ?? 0) || 0);
+    const p3Amount = Math.max(0, Number(formData.get("place_3_amount") ?? 0) || 0);
+
+    const rows = [
+      { place: 1, teamId: p1TeamId, amount: p1Amount },
+      { place: 2, teamId: p2TeamId, amount: p2Amount },
+      { place: 3, teamId: p3TeamId, amount: p3Amount },
+    ].filter((x) => x.teamId);
+
+    const teamIds = [...new Set(rows.map((x) => x.teamId))];
+    if (teamIds.length !== rows.length) return;
+
+    const teams = await pgRows<Array<{ id: string; captain_id: string }>[number]>(
+      `
+        select id, captain_id
+        from teams
+        where id = any($1::uuid[])
+      `,
+      [teamIds]
+    );
+
+    const captainByTeam = new Map(teams.map((t) => [t.id, t.captain_id]));
+
+    const insertRows = rows
+      .map((row) => ({
+        tournament_id: tournamentId,
+        place: row.place,
+        team_id: row.teamId,
+        captain_user_id: captainByTeam.get(row.teamId) ?? null,
+        prize_amount: row.amount,
+      }))
+      .filter((row): row is { tournament_id: string; place: number; team_id: string; captain_user_id: string; prize_amount: number } => Boolean(row.captain_user_id));
+
+    await pgQuery(`delete from tournament_results where tournament_id = $1`, [tournamentId]);
+    if (insertRows.length > 0) {
+      for (const row of insertRows) {
+        await pgQuery(
+          `
+            insert into tournament_results (tournament_id, place, team_id, captain_user_id, prize_amount)
+            values ($1, $2, $3, $4, $5)
+          `,
+          [row.tournament_id, row.place, row.team_id, row.captain_user_id, row.prize_amount]
+        );
+      }
+    }
+
+    revalidatePath("/admin/tournaments");
+    revalidatePath("/profile");
+    redirect("/admin/tournaments#edit");
+  }
+
+  async function finishTournament(formData: FormData) {
+    "use server";
+
+    const tournamentId = String(formData.get("tournament_id") ?? "").trim();
+    if (!tournamentId) return;
+
+    await requireAdmin();
+
+    await pgQuery(`update tournaments set status = 'finished' where id = $1`, [tournamentId]);
+
+    revalidatePath("/admin/tournaments");
+    revalidatePath("/tournaments");
+    revalidatePath("/profile");
+    redirect("/admin/tournaments#edit");
+  }
+
+  async function createPrizeClaims(formData: FormData) {
+    "use server";
+
+    const tournamentId = String(formData.get("tournament_id") ?? "").trim();
+    if (!tournamentId) return;
+
+    await requireAdmin();
+
+    const results = await pgRows<Array<{ place: number; team_id: string | null; captain_user_id: string; prize_amount: number }>[number]>(
+      `
+        select place, team_id, captain_user_id, prize_amount
+        from tournament_results
+        where tournament_id = $1
+        order by place asc
+      `,
+      [tournamentId]
+    );
+
+    if (results.length === 0) return;
+
+    for (const row of results) {
+      await pgQuery(
+        `
+          insert into prize_claims (tournament_id, place, team_id, winner_user_id, amount, status, updated_at)
+          values ($1, $2, $3, $4, $5, 'awaiting_details', now())
+          on conflict (tournament_id, place) do update
+          set team_id = excluded.team_id,
+              winner_user_id = excluded.winner_user_id,
+              amount = excluded.amount,
+              status = 'awaiting_details',
+              updated_at = now()
+        `,
+        [tournamentId, row.place, row.team_id, row.captain_user_id, Number(row.prize_amount ?? 0)]
+      );
+    }
+
+    revalidatePath("/admin/tournaments");
+    revalidatePath("/profile");
+    redirect("/admin/tournaments#edit");
   }
 
   return (
@@ -342,6 +643,13 @@ export default async function AdminTournamentsPage() {
 
           <input name="start_at" type="datetime-local" required className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm" />
           <input name="prize_pool" type="number" min={0} defaultValue={0} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm" />
+          <input
+            name="max_teams"
+            type="number"
+            min={1}
+            placeholder={isEn ? "Max registered teams (optional)" : "Макс. команд (необязательно)"}
+            className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm"
+          />
           <input name="room_code" placeholder="Room ID / Lobby code" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm" />
           <input name="room_password" placeholder="Room password" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm" />
           <textarea
@@ -360,7 +668,26 @@ export default async function AdminTournamentsPage() {
       <div id="edit" className="rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6">
         <h2 className="text-lg font-semibold">{isEn ? "Tournament list" : "Список турниров"}</h2>
         <div className="mt-4 space-y-4">
-          {(tournaments ?? []).map((t) => (
+          {(tournaments ?? []).map((t) => {
+            const registrationOptions = registrationsByTournament.get(t.id) ?? [];
+            const teamOptions = Array.from(
+              new Map(
+                registrationOptions
+                  .filter((r) => r.team_id)
+                  .map((r) => [
+                    String(r.team_id),
+                    {
+                      teamId: String(r.team_id),
+                      teamName: String(r.teams?.name ?? r.team_id),
+                    },
+                  ])
+              ).values()
+            );
+            const tournamentResults = (resultsByTournament.get(t.id) ?? []).sort((a, b) => a.place - b.place);
+            const prizeClaims = (claimsByTournament.get(t.id) ?? []).sort((a, b) => a.place - b.place);
+            const resultByPlace = new Map(tournamentResults.map((r) => [r.place, r]));
+
+            return (
             <form key={t.id} action={updateTournament} className="rounded-2xl border border-white/10 bg-black/20 p-4">
               <input type="hidden" name="id" value={t.id} />
 
@@ -401,6 +728,14 @@ export default async function AdminTournamentsPage() {
                   defaultValue={Number(t.prize_pool ?? 0)}
                   className="rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm"
                 />
+                <input
+                  name="max_teams"
+                  type="number"
+                  min={1}
+                  defaultValue={t.max_teams ?? ""}
+                  placeholder={isEn ? "Max registered teams (optional)" : "Макс. команд (необязательно)"}
+                  className="rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-sm"
+                />
 
                 <input
                   name="room_code"
@@ -433,8 +768,65 @@ export default async function AdminTournamentsPage() {
                   {isEn ? "Delete" : "Удалить"}
                 </button>
               </div>
+
+              <div className="mt-3 rounded-xl border border-white/10 bg-black/30 p-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-white/60">
+                  {isEn ? "Results and payouts" : "Результаты и выплаты"}
+                </div>
+                <input type="hidden" name="tournament_id" value={t.id} />
+                <div className="mt-2 grid gap-2 md:grid-cols-3">
+                  <select name="place_1_team_id" defaultValue={resultByPlace.get(1)?.team_id ?? ""} className="rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm">
+                    <option value="">{isEn ? "1st place team" : "Команда 1 места"}</option>
+                    {teamOptions.map((team) => (
+                      <option key={`p1-${team.teamId}`} value={team.teamId}>
+                        {team.teamName}
+                      </option>
+                    ))}
+                  </select>
+                  <select name="place_2_team_id" defaultValue={resultByPlace.get(2)?.team_id ?? ""} className="rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm">
+                    <option value="">{isEn ? "2nd place team" : "Команда 2 места"}</option>
+                    {teamOptions.map((team) => (
+                      <option key={`p2-${team.teamId}`} value={team.teamId}>
+                        {team.teamName}
+                      </option>
+                    ))}
+                  </select>
+                  <select name="place_3_team_id" defaultValue={resultByPlace.get(3)?.team_id ?? ""} className="rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm">
+                    <option value="">{isEn ? "3rd place team" : "Команда 3 места"}</option>
+                    {teamOptions.map((team) => (
+                      <option key={`p3-${team.teamId}`} value={team.teamId}>
+                        {team.teamName}
+                      </option>
+                    ))}
+                  </select>
+                  <input name="place_1_amount" type="number" min={0} defaultValue={Number(resultByPlace.get(1)?.prize_amount ?? 0)} placeholder={isEn ? "1st place amount" : "Сумма 1 места"} className="rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm" />
+                  <input name="place_2_amount" type="number" min={0} defaultValue={Number(resultByPlace.get(2)?.prize_amount ?? 0)} placeholder={isEn ? "2nd place amount" : "Сумма 2 места"} className="rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm" />
+                  <input name="place_3_amount" type="number" min={0} defaultValue={Number(resultByPlace.get(3)?.prize_amount ?? 0)} placeholder={isEn ? "3rd place amount" : "Сумма 3 места"} className="rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm" />
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button formAction={saveTournamentResults} className="rounded-lg border border-cyan-400/40 bg-cyan-500/10 px-3 py-1.5 text-xs text-cyan-100 hover:bg-cyan-500/20">
+                    {isEn ? "Save podium" : "Сохранить призовые места"}
+                  </button>
+                  <button formAction={finishTournament} className="rounded-lg border border-amber-400/40 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-100 hover:bg-amber-500/20">
+                    {isEn ? "Finish tournament" : "Завершить турнир"}
+                  </button>
+                  <button formAction={createPrizeClaims} className="rounded-lg border border-emerald-400/40 bg-emerald-500/10 px-3 py-1.5 text-xs text-emerald-100 hover:bg-emerald-500/20">
+                    {isEn ? "Create prize claims" : "Создать призовые заявки"}
+                  </button>
+                </div>
+                {prizeClaims.length > 0 && (
+                  <div className="mt-3 space-y-1 text-xs text-white/70">
+                    {prizeClaims.map((claim) => (
+                      <div key={claim.id}>
+                        {claim.place}. {isEn ? "place" : "место"} • {formatEuro(claim.amount, locale)} • {isEn ? "status" : "статус"}: {claim.status}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </form>
-          ))}
+            );
+          })}
 
           {(tournaments?.length ?? 0) === 0 && <div className="text-sm text-white/60">{isEn ? "No tournaments yet." : "Турниров пока нет."}</div>}
         </div>
@@ -442,7 +834,7 @@ export default async function AdminTournamentsPage() {
 
       <div id="content" className="grid gap-4 lg:grid-cols-3">
         <div className="rounded-3xl border border-white/10 bg-white/5 p-4 sm:p-6">
-          <h3 className="text-lg font-semibold">{isEn ? "Schedule table (Supabase)" : "Таблица расписания (Supabase)"}</h3>
+          <h3 className="text-lg font-semibold">{isEn ? "Schedule table" : "Таблица расписания"}</h3>
           <form action={createScheduleItem} className="mt-3 grid gap-3 md:grid-cols-2">
             <select name="tournament_id" required className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm">
               <option value="">{isEn ? "Select tournament" : "Выберите турнир"}</option>

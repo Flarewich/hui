@@ -1,8 +1,9 @@
-﻿import Link from "next/link";
+import Link from "next/link";
 import Image from "next/image";
-import { createSupabaseServerClient } from "@/lib/supabaseServer";
 import { getMessages } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/i18nServer";
+import { countUnreadNotifications } from "@/lib/notifications";
+import { getCurrentSession } from "@/lib/sessionAuth";
 import AvatarMenu from "./AvatarMenu";
 import LanguageSwitcher from "./LanguageSwitcher";
 import NavDropdown from "./NavDropdown";
@@ -11,36 +12,12 @@ import TournamentsMenu from "./TournamentsMenu";
 export default async function Header() {
   const locale = await getRequestLocale();
   const t = getMessages(locale);
+  const session = await getCurrentSession();
+  const user = session?.user ?? null;
+  const profile = session?.profile ?? null;
+  const unreadNotifications = user ? await countUnreadNotifications(user.id) : 0;
 
-  const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  let profile: {
-    username: string | null;
-    avatar_url: string | null;
-    role: string | null;
-    is_banned: boolean | null;
-    banned_until: string | null;
-    restricted_until: string | null;
-  } | null = null;
-  let canUseAccount = false;
-
-  if (user) {
-    const { data } = await supabase
-      .from("profiles")
-      .select("username, avatar_url, role, is_banned, banned_until, restricted_until")
-      .eq("id", user.id)
-      .single();
-    profile = data ?? null;
-
-    const now = new Date().getTime();
-    const bannedUntilTs = profile?.banned_until ? new Date(profile.banned_until).getTime() : 0;
-    const restrictedUntilTs = profile?.restricted_until ? new Date(profile.restricted_until).getTime() : 0;
-    const isBlocked = Boolean(profile?.is_banned) || bannedUntilTs > now || restrictedUntilTs > now;
-    canUseAccount = !isBlocked;
-  }
+  const canUseAccount = Boolean(user && profile && !profile.is_blocked);
 
   return (
     <header className="site-nav sticky top-0 z-50 border-b border-white/10 bg-black/60 backdrop-blur">
@@ -93,6 +70,7 @@ export default async function Header() {
                 username={profile?.username ?? user.email ?? "User"}
                 avatarUrl={profile?.avatar_url ?? null}
                 isAdmin={profile?.role === "admin"}
+                unreadNotifications={unreadNotifications}
                 labels={t.avatarMenu}
               />
             )}
@@ -102,4 +80,3 @@ export default async function Header() {
     </header>
   );
 }
-

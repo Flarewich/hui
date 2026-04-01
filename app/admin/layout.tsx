@@ -26,8 +26,14 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           <Link href="/admin/users" className="rounded-xl border border-white/10 bg-black/20 px-3 py-1.5 hover:bg-white/5">
             {isEn ? "Users" : "Пользователи"}
           </Link>
+          <Link href="/admin/payments" className="rounded-xl border border-white/10 bg-black/20 px-3 py-1.5 hover:bg-white/5">
+            {isEn ? "Payments" : "Выплаты"}
+          </Link>
           <Link href="/admin/sponsors" className="rounded-xl border border-white/10 bg-black/20 px-3 py-1.5 hover:bg-white/5">
             {isEn ? "Sponsors" : "Спонсоры"}
+          </Link>
+          <Link href="/admin/emails" className="rounded-xl border border-white/10 bg-black/20 px-3 py-1.5 hover:bg-white/5">
+            {isEn ? "Emails" : "Письма"}
           </Link>
         </div>
       </div>
