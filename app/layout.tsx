@@ -92,7 +92,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
               <div className="space-y-1">
                 <div className="font-semibold text-white/90">(c) {new Date().getFullYear()} {t.footer.brand}</div>
-                <div className="text-white/60">support@tournaments</div>
+                <div className="text-white/60">tourniers@win-strike.com</div>
                 <div className="flex flex-wrap items-center gap-3 pt-1 text-xs text-white/65">
                   <a href="/privacy" className="hover:text-cyan-200">
                     Privacy Policy
@@ -110,7 +110,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                   </svg>
                 </SocialIconLink>
 
-                <SocialIconLink href="https://discord.com/" label="Discord">
+                <SocialIconLink href="https://discord.gg/wuNPVS7d" label="Discord">
                   <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden="true">
                     <path d="M20.3 4.6a16.2 16.2 0 0 0-4.1-1.3l-.2.4-.5 1a14.7 14.7 0 0 0-6.9 0l-.5-1-.2-.4A16.2 16.2 0 0 0 3.8 4.6C1.2 8.4.5 12.1.9 15.7a16.5 16.5 0 0 0 5 2.5l1.1-1.7a10.6 10.6 0 0 1-1.7-.8l.4-.3a11.8 11.8 0 0 0 10.6 0l.4.3a10.6 10.6 0 0 1-1.7.8l1.1 1.7a16.5 16.5 0 0 0 5-2.5c.5-4.1-.9-7.8-2.8-11.1ZM9.3 13.4c-.8 0-1.4-.8-1.4-1.7s.6-1.7 1.4-1.7 1.4.8 1.4 1.7-.6 1.7-1.4 1.7Zm5.4 0c-.8 0-1.4-.8-1.4-1.7s.6-1.7 1.4-1.7 1.4.8 1.4 1.7-.6 1.7-1.4 1.7Z" />
                   </svg>
