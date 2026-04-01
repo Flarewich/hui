@@ -118,9 +118,9 @@ const ru: Messages = {
   },
   tournamentsPage: {
     title: "Турниры",
-    titleWatch: "Турниры (просмотр)",
+    titleWatch: "Турниры",
     subtitle: "Расписание и регистрация",
-    subtitleWatch: "Список турниров в режиме просмотра",
+    subtitleWatch: "Список активных и предстоящих турниров",
     gameFilter: "Фильтр по играм",
     register: "Регистрация",
     loadError: "Ошибка загрузки турниров",
@@ -138,7 +138,7 @@ const ru: Messages = {
     scheduleColMode: "Режим",
     scheduleColStream: "Трансляция",
     scheduleNoRows: "В расписании пока нет матчей.",
-    scheduleNoTable: "Таблица расписания не найдена. Примените SQL-миграцию tournament_schedule.",
+    scheduleNoTable: "Расписание пока недоступно.",
   },
 };
 
@@ -186,9 +186,9 @@ const en: Messages = {
   },
   tournamentsPage: {
     title: "Tournaments",
-    titleWatch: "Tournaments (watch)",
+    titleWatch: "Tournaments",
     subtitle: "Schedule and registration",
-    subtitleWatch: "Tournament list in watch mode",
+    subtitleWatch: "Active and upcoming tournaments",
     gameFilter: "Filter by game",
     register: "Register",
     loadError: "Failed to load tournaments",
@@ -206,7 +206,7 @@ const en: Messages = {
     scheduleColMode: "Mode",
     scheduleColStream: "Stream",
     scheduleNoRows: "No matches are scheduled yet.",
-    scheduleNoTable: "Schedule table was not found. Apply tournament_schedule SQL migration.",
+    scheduleNoTable: "Schedule is not available yet.",
   },
 };
 

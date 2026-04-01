@@ -20,11 +20,11 @@ export default async function HelpPage() {
         },
         {
           q: "How can I contact administration?",
-          a: "Use the built-in support chat. For authenticated users, route /support is available.",
+          a: "Use the built-in support chat after sign in.",
         },
         {
           q: "Why can't I access admin panel?",
-          a: "Access to /admin is only for accounts with role admin in profiles table.",
+          a: "Administrator tools are available only to accounts with admin access.",
         },
       ]
     : [
@@ -38,11 +38,11 @@ export default async function HelpPage() {
         },
         {
           q: "Как связаться с администрацией?",
-          a: "Используйте встроенный чат поддержки. Для авторизованных пользователей доступен маршрут /support.",
+          a: "Используйте встроенный чат поддержки после входа в аккаунт.",
         },
         {
           q: "Почему меня не пускает в админку?",
-          a: "Доступ в /admin только для аккаунтов с ролью admin в таблице profiles.",
+          a: "Инструменты администратора доступны только аккаунтам с правами admin.",
         },
       ];
 

@@ -65,7 +65,7 @@ export default async function LoginPage({
     const isEn = locale === "en";
     const invalidDataMsg = isEn
       ? "Incorrect data entered. Please check and try again."
-      : "Вы ввели неправильные данные, перепроверьте.";
+      : "Вы ввели некорректные данные. Проверьте и попробуйте снова.";
 
     try {
       await assertSameOriginServerAction();
@@ -135,7 +135,7 @@ export default async function LoginPage({
     const isEn = locale === "en";
     const invalidDataMsg = isEn
       ? "Incorrect data entered. Please check and try again."
-      : "Вы ввели неправильные данные, перепроверьте.";
+      : "Вы ввели некорректные данные. Проверьте и попробуйте снова.";
 
     try {
       await assertSameOriginServerAction();
@@ -162,7 +162,7 @@ export default async function LoginPage({
       await registerWithPassword({ email, password, usernameInput });
       redirect(
         `/login?tab=signin&ok=${encodeURIComponent(
-          isEn ? "Registration successful. Now sign in." : "Регистрация успешна. Теперь войдите в аккаунт."
+          isEn ? "Registration successful. Now sign in." : "Регистрация прошла успешно. Теперь войдите в аккаунт."
         )}`
       );
     } catch (e) {
@@ -204,18 +204,18 @@ export default async function LoginPage({
 
         {tab === "signin" ? (
           <>
-          <form action={signIn} className="mt-5 grid gap-3">
-            <input name="email" type="email" required className="input" placeholder="you@mail.com" />
-            <input name="password" type="password" required className="input" placeholder={isEn ? "Password" : "Пароль"} />
-            <button type="submit" className="btn-primary mt-1 w-full">
-              {isEn ? "Sign in" : "Войти"}
-            </button>
-          </form>
-          <div className="mt-2 text-right text-xs text-white/60">
-            <Link href="/reset-password" className="text-cyan-300 hover:text-cyan-200">
-              {isEn ? "Forgot password?" : "Забыли пароль?"}
-            </Link>
-          </div>
+            <form action={signIn} className="mt-5 grid gap-3">
+              <input name="email" type="email" required className="input" placeholder="you@mail.com" />
+              <input name="password" type="password" required className="input" placeholder={isEn ? "Password" : "Пароль"} />
+              <button type="submit" className="btn-primary mt-1 w-full">
+                {isEn ? "Sign in" : "Войти"}
+              </button>
+            </form>
+            <div className="mt-2 text-right text-xs text-white/60">
+              <Link href="/reset-password" className="text-cyan-300 hover:text-cyan-200">
+                {isEn ? "Forgot password?" : "Забыли пароль?"}
+              </Link>
+            </div>
           </>
         ) : (
           <form action={signUp} className="mt-5 grid gap-3">
@@ -235,15 +235,7 @@ export default async function LoginPage({
         )}
 
         <div className="pt-4 text-center text-xs text-white/60">
-          {isEn ? "After sign in, available routes are " : "После входа доступны "}
-          <Link href="/profile" className="text-cyan-300">
-            /profile
-          </Link>{" "}
-          {isEn ? "and" : "и"}{" "}
-          <Link href="/support" className="text-cyan-300">
-            /support
-          </Link>
-          .
+          {isEn ? "After sign in, you can manage your profile, teams and tournament activity." : "После входа вы сможете управлять профилем, командами и участием в турнирах."}
         </div>
       </div>
     </div>

@@ -91,7 +91,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       id,
       `error=${encodeURIComponent(
         isEn
-          ? "Tournament is configured incorrectly: this game requires team registration. Ask admin to switch mode to squad/duo."
+          ? "Registration is temporarily unavailable for this tournament format."
           : "Турнир настроен некорректно: для этой игры нужна командная регистрация. Попросите админа переключить режим на squad/duo."
       )}`
     );
